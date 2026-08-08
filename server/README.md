@@ -72,7 +72,8 @@ gate on side-effectful skills, and the append-only audit log.
 
 ## Security hardening in place (D4/D8)
 
-- argon2id password hashes (scrypt verify-fallback), login lockout backoff.
+- argon2id password hashes (scrypt verify-fallback), login lockout backoff,
+  password change revokes all sessions (`POST /api/auth/change-password`).
 - Secrets (OpenRouter key, at-rest keys) in a **DPAPI-backed store** under
   `<data>/secrets/` — never in the DB, config files, or repo.
 - **Encryption at rest, default-on (Phase 1 exit criterion):**

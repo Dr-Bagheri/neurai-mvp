@@ -220,6 +220,104 @@ def test_true_deletion_removes_everything(client):
     assert hits == []
 
 
+def test_password_change_revokes_all_sessions(client):
+    """D8: password change invalidates every other session; the changing
+    client gets a fresh one; the old password stops working."""
+    from conftest import SESSION_COOKIE, as_user
+
+    signup(client, "admin")
+    token_a = client.cookies.get(SESSION_COOKIE)
+    client.cookies.clear()
+    client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    token_b = client.cookies.get(SESSION_COOKIE)
+    assert token_a != token_b
+
+    # change the password from session B
+    r = client.post("/api/auth/change-password",
+                    json={"current_password": "secret123", "new_password": "newpass456"})
+    assert r.status_code == 200
+    assert client.get("/api/auth/me").status_code == 200  # B re-issued, still signed in
+
+    as_user(client, token_a)                               # A is revoked
+    assert client.get("/api/auth/me").status_code == 401
+
+    client.cookies.clear()
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    assert r.status_code == 401                            # old password dead
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "newpass456"})
+    assert r.status_code == 200
+
+    # wrong current password is rejected (and doesn't revoke anything)
+    r = client.post("/api/auth/change-password",
+                    json={"current_password": "wrong-one", "new_password": "whatever789"})
+    assert r.status_code == 403
+
+
+def test_runtime_strips_cloud_without_manifest_permission(client):
+    """D7 rule 3 (enforced part): a skill whose manifest lacks llm:cloud runs
+    with ctx.allow_cloud stripped, even when the caller consented."""
+    from neurai.skills import get_skill_runtime
+    from neurai.skills.runtime import SkillContext, SkillManifest
+
+    signup(client, "admin")
+    rt = get_skill_runtime()
+    seen = {}
+
+    async def probe(ctx, params):
+        seen["allow_cloud"] = ctx.allow_cloud
+        return {"ok": True}
+
+    rt.register(SkillManifest(
+        "probe_no_cloud", "test probe", {"type": "object", "properties": {}},
+        frozenset({"llm:local"})), probe)
+    rt.register(SkillManifest(
+        "probe_with_cloud", "test probe", {"type": "object", "properties": {}},
+        frozenset({"llm:local", "llm:cloud"})), probe)
+
+    ctx = SkillContext(user_id=1, username="admin", allow_cloud=True)
+    anyio.run(rt.execute, "probe_no_cloud", {}, ctx)
+    assert seen["allow_cloud"] is False
+    anyio.run(rt.execute, "probe_with_cloud", {}, ctx)
+    assert seen["allow_cloud"] is True
+
+
+def test_rag_query_normalization(client):
+    """D5: an Arabic-typed ي/ك query must find chunks indexed with Persian
+    characters — normalization applies to both sides."""
+    from neurai.db import get_db
+    from neurai.rag import index_text, search_chunks
+
+    signup(client, "admin")
+    admin_id = get_db().query_one("SELECT id FROM users WHERE username='admin'")["id"]
+
+    async def scenario():
+        await index_text(admin_id, "document", 1, "علی کتاب را آورد")
+        return await search_chunks(admin_id, "علي كتاب")  # Arabic yeh + kaf
+
+    hits = anyio.run(scenario)
+    assert hits and "علی" in hits[0].text
+
+
+def test_export_meeting_is_owner_scoped(client):
+    """minutes/export reads the meeting WHERE owner_id=? — defense in depth
+    beyond the skill-layer check."""
+    import pytest
+
+    from conftest import as_user
+    from neurai.db import get_db
+    from neurai.minutes.export import export_meeting
+    from neurai.skills.runtime import SkillContext
+
+    signup(client, "alice")
+    meeting_id = client.post("/api/meetings", json={"title": "محرمانه"}).json()["id"]
+    signup(client, "bob")
+    bob_id = get_db().query_one("SELECT id FROM users WHERE username='bob'")["id"]
+
+    bob_ctx = SkillContext(user_id=bob_id, username="bob", confirmed=True)
+    with pytest.raises(RuntimeError):
+        anyio.run(export_meeting, meeting_id, bob_ctx, "txt", "plain")
+
+
 def test_migrations_are_versioned(app_env):
     from neurai.db import get_db
 

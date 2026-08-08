@@ -107,6 +107,27 @@ def me(user: CurrentUser = Depends(current_user)):
                    display_name=user.display_name, is_admin=user.is_admin)
 
 
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6, max_length=256)
+
+
+@router.post("/change-password")
+def change_password(body: PasswordChange, response: Response,
+                    user: CurrentUser = Depends(current_user)):
+    """D8: changing the password revokes every existing session; this client
+    gets a fresh one so the user stays signed in."""
+    db = get_db()
+    row = db.query_one("SELECT password_hash FROM users WHERE id=?", (user.id,))
+    if row is None or not verify_password(body.current_password, row["password_hash"]):
+        raise HTTPException(403, "رمز عبور فعلی نادرست است")
+    db.execute("UPDATE users SET password_hash=? WHERE id=?",
+               (hash_password(body.new_password), user.id))
+    db.execute("DELETE FROM auth_sessions WHERE user_id=?", (user.id,))
+    _set_cookie(response, _create_session(user.id))
+    return {"ok": True}
+
+
 @router.post("/users", response_model=UserOut)
 def create_user(body: Credentials, admin: CurrentUser = Depends(current_admin)):
     db = get_db()

@@ -94,3 +94,11 @@ is the only one with working GitHub access (github.com/Dr-Bagheri/neurai-mvp).
   encrypted); `installer/`, `docs/*.pdf`, `docs/*.docx` are gitignored by user request.
   Open fix-list handed to sessions: D7 rule-3 manifest enforcement, fa_normalize on RAG
   ingest/query, webui types generated from openapi.json, client.ts still 100% mock.
+- 2026-08-08 (audit fixes, backend): all four backend items from the steward audit
+  closed — (1) D7 rule 3: runtime now strips `allow_cloud` from skills whose manifest
+  lacks `llm:cloud` (enforced), docstring rewritten to state exactly what's enforced vs
+  declarative-until-third-party-skills; (2) fa_normalize applied on document ingest and
+  on search queries (Arabic ي/ك queries now match normalized chunks — tested); (3)
+  minutes/export meeting read is owner-scoped; (4) `POST /api/auth/change-password`
+  added — revokes all sessions, re-issues the caller's (D8). 45 tests green,
+  openapi.json regenerated (webui session: one new auth endpoint).

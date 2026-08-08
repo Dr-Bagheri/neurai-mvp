@@ -97,7 +97,11 @@ def _signature_lines() -> list[str]:
 async def export_meeting(meeting_id: int, ctx, fmt: str = "docx", template: str = "soorat_jalase") -> Path:
     cfg = get_config()
     db = get_db()
-    meeting = db.query_one("SELECT * FROM meetings WHERE id=?", (meeting_id,))
+    # Owner-scoped even though callers already check (D7 rule 1: the ACL is a
+    # WHERE clause at every read, not a caller convention).
+    meeting = db.query_one(
+        "SELECT * FROM meetings WHERE id=? AND owner_id=?", (meeting_id, ctx.user_id),
+    )
     if meeting is None:
         raise RuntimeError("جلسه پیدا نشد")
 
