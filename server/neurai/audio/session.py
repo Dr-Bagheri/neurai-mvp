@@ -5,11 +5,11 @@ browser WebSocket, appends them to the recording (kept for audio-linked
 playback), runs the live ASR pass on utterance boundaries, stores live
 segments, and broadcasts captions to subscribed viewers.
 
-Crash-safe recording (D2 invariant): chunks are appended to a raw `.pcm`
-file and fsynced as they arrive — a server crash never loses meeting audio.
-The playable `.wav` (fixed 44-byte header + the same PCM) is finalized on
-stop; `recover_orphaned_recordings()` finalizes any `.pcm` left behind by a
-crash at next startup and queues its quality pass.
+Crash-safe recording (D2) + audio at-rest encryption (D4, Phase 1 exit
+criterion): chunks are AES-CTR-encrypted and fsynced into `meeting_N.neura`
+as they arrive (see neurai/security/audiocrypt.py). The file needs no
+finalization — a crash never loses meeting audio, and recovery is just a
+status flip + requeued quality pass (`recover_crashed_meetings()`).
 
 `LiveSessionManager` enforces the concurrency cap (§4): starting a second
 meeting while one is live is refused with «جلسه‌ای در حال ضبط است» — a config
@@ -18,9 +18,6 @@ cap, not an architectural limit.
 from __future__ import annotations
 
 import asyncio
-import os
-import re
-import struct
 from pathlib import Path
 from typing import Any
 
@@ -46,32 +43,15 @@ class MeetingBusyError(Exception):
     message_fa = "جلسه‌ای در حال ضبط است"
 
 
-def _write_wav_from_pcm(pcm_path: Path, wav_path: Path) -> None:
-    """Wrap a raw PCM16@16k mono file in a WAV container (streamed copy)."""
-    data_size = pcm_path.stat().st_size
-    byte_rate = SAMPLE_RATE * 2
-    header = (
-        b"RIFF" + struct.pack("<I", 36 + data_size) + b"WAVE"
-        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, SAMPLE_RATE, byte_rate, 2, 16)
-        + b"data" + struct.pack("<I", data_size)
-    )
-    with open(wav_path, "wb") as out, open(pcm_path, "rb") as src:
-        out.write(header)
-        while True:
-            block = src.read(1 << 20)
-            if not block:
-                break
-            out.write(block)
-
-
 class LiveSession:
-    def __init__(self, meeting_id: int, owner_id: int, wav_path: Path):
+    def __init__(self, meeting_id: int, owner_id: int, audio_path: Path):
+        from neurai.security.audiocrypt import EncryptedAudioWriter
+
         self.meeting_id = meeting_id
         self.owner_id = owner_id
-        self.wav_path = wav_path
-        self.pcm_path = wav_path.with_suffix(".pcm")
-        # append mode: a reconnecting session after a dropped WS keeps the audio
-        self._pcm = open(self.pcm_path, "ab")
+        self.audio_path = audio_path
+        # encrypted append-only writer; reopening resumes after a dropped WS
+        self._writer = EncryptedAudioWriter(audio_path)
         self._buffer = bytearray()
         self._written_ms = 0          # audio written to disk so far
         self._buffer_start_ms = 0     # meeting-time offset of buffer[0]
@@ -101,11 +81,9 @@ class LiveSession:
     async def feed(self, chunk: bytes) -> None:
         if self._closed:
             return
-        # D2 invariant: audio hits disk as it arrives; fsync so a crash (or
-        # power cut) never loses more than the in-flight chunk.
-        self._pcm.write(chunk)
-        self._pcm.flush()
-        os.fsync(self._pcm.fileno())
+        # D2 invariant: audio hits disk (encrypted + fsynced) as it arrives;
+        # a crash or power cut never loses more than the in-flight chunk.
+        self._writer.write(chunk)
         self._written_ms += len(chunk) // _BYTES_PER_MS
         self._buffer.extend(chunk)
         buffer_ms = len(self._buffer) // _BYTES_PER_MS
@@ -148,9 +126,7 @@ class LiveSession:
         if len(self._buffer) // _BYTES_PER_MS >= _MIN_BUFFER_MS:
             await self._transcribe(bytes(self._buffer), self._buffer_start_ms)
         self._buffer.clear()
-        self._pcm.close()
-        _write_wav_from_pcm(self.pcm_path, self.wav_path)
-        self.pcm_path.unlink(missing_ok=True)
+        self._writer.close()  # sealed as-is: no finalization step to lose in a crash
         self._broadcast({"type": "ended"})
 
 
