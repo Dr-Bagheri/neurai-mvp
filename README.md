@@ -5,7 +5,12 @@ multi-task AI assistant platform for teams, deployed on-premise.
 
 - 🎙️ **Live meeting transcription** in Persian — live captions during the meeting, a
   full-quality transcript with speaker labels minutes after it ends. Fully offline.
-- 🧠 **Meeting intelligence** — summaries, action items, decisions
+  Click any sentence to hear that moment; bookmark key moments live.
+- 🧠 **Meeting intelligence** — summaries, decisions, and a live **action-item tracker**
+  (assignees, due dates, resurfacing in recurring meetings); cross-meeting search and
+  "since last time" recaps
+- 📋 **صورتجلسه رسمی** — formal Iranian minutes templates with گفتاری→نوشتاری register
+  conversion, Word/PDF export, Jalali dates
 - 💬 **Persian chat assistant** and 📄 **document Q&A (RAG)** over your own files
 - 🛠️ **Skills (AI-native):** ask in plain Persian — «جلسه دیروز رو خلاصه کن» — and the
   assistant calls the right tools itself; every call runs with *your* permissions, on an
