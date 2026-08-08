@@ -33,32 +33,44 @@ _MIGRATIONS_DIR = Path(__file__).with_name("migrations")
 AT_REST_KEY_NAME = "db_at_rest_key"
 
 
-def _connect(path: str | Path) -> tuple[Any, bool]:
-    """Returns (connection, encrypted). Prefers SQLCipher when available."""
+def _connect(path: str | Path) -> tuple[Any, Any, bool]:
+    """Returns (connection, row_type, encrypted). SQLCipher is a base
+    dependency (D4: encryption default-on); the plain-sqlite3 fallback exists
+    only for stripped environments and warns loudly."""
     try:
-        import sqlcipher3  # optional: pip install sqlcipher3-wheels
+        import sqlcipher3
 
         from neurai.security import get_or_create_key
 
         conn = sqlcipher3.connect(str(path), check_same_thread=False)
         conn.execute(f"PRAGMA key = \"x'{get_or_create_key(AT_REST_KEY_NAME)}'\"")
-        return conn, True
+        return conn, sqlcipher3.Row, True
     except ImportError:
         conn = sqlite3.connect(str(path), check_same_thread=False)
-        return conn, False
+        return conn, sqlite3.Row, False
 
 
 class Database:
     def __init__(self, path: str | Path):
         self._lock = threading.RLock()
-        self._conn, self.encrypted = _connect(path)
+        self._conn, row_type, self.encrypted = _connect(path)
         if not self.encrypted:
             log.warning(
                 "sqlcipher3 not installed — database at-rest encryption is OFF "
                 "(acceptable for dev/CI only; see D4/D8)"
             )
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.row_factory = row_type
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        except Exception as e:
+            if self.encrypted and "not a database" in str(e).lower():
+                raise RuntimeError(
+                    f"{path} exists but cannot be decrypted. Either it predates "
+                    "at-rest encryption (a plaintext dev database — delete it or "
+                    "move it aside) or the key in the secret store does not match "
+                    "this database. Refusing to touch it. (D4)"
+                ) from e
+            raise
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self.migrate()

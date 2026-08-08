@@ -65,10 +65,18 @@ def test_full_meeting_lifecycle(client):
     segments = client.get(f"/api/meetings/{meeting_id}/transcript").json()
     assert segments[0]["speaker"] == "سارا"
 
-    # audio-linked playback: the recording is served (Range-capable)
+    # audio-linked playback: encrypted at rest, served as a synthesized WAV
     r = client.get(f"/api/meetings/{meeting_id}/audio")
     assert r.status_code == 200
     assert r.headers["content-type"] == "audio/wav"
+    assert r.content[:4] == b"RIFF"
+    total = len(r.content)
+
+    # Range seeking (click a sentence → play that moment)
+    r = client.get(f"/api/meetings/{meeting_id}/audio", headers={"Range": "bytes=44-143"})
+    assert r.status_code == 206
+    assert len(r.content) == 100
+    assert r.headers["content-range"] == f"bytes 44-143/{total}"
 
     # bookmarks + notes
     assert client.post(f"/api/meetings/{meeting_id}/bookmarks",

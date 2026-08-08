@@ -71,3 +71,10 @@ is the only one with working GitHub access (github.com/Dr-Bagheri/neurai-mvp).
   (default-on before any real meeting data; dev/CI may run unencrypted on fake data).
   Still Phase 4 as planned: retention policy, TLS/installer, signed bundles,
   structured JSON logs (D8/D9 remainder).
+- 2026-08-08 (later): Phase 1 encryption exit criteria IMPLEMENTED, default-on:
+  SQLCipher is now a base dependency (DB unreadable as plain SQLite — tested), and
+  recordings are sealed AES-256-CTR files (`meeting_N.neura`) — CTR preserves both
+  the D2 crash-safety invariant (chunks encrypted+fsynced on arrival, no finalization
+  step) and Range-seekable playback (WAV synthesized at serving time). Crash recovery
+  is now a status flip + requeued quality pass. 40 tests green, whole suite runs with
+  encryption active. Approach documented in server/README.md.

@@ -47,34 +47,76 @@ def test_secret_store_roundtrip(app_env):
     assert get_secret("openrouter_key") is None
 
 
-def test_crash_recovery_finalizes_orphaned_pcm(client):
-    """A .pcm left by a crash becomes a playable WAV + queued quality pass."""
-    from neurai.audio.session import recover_orphaned_recordings
+def test_audio_encryption_roundtrip_and_resume(app_env):
+    """Recordings are AES-CTR at rest: ciphertext on disk, lossless decrypt,
+    and append-resume continues the keystream correctly (dropped-WS case)."""
+    from neurai.config import get_config
+    from neurai.security.audiocrypt import EncryptedAudioWriter, pcm_size, read_pcm, read_pcm_range
+
+    get_config().ensure_dirs()
+    path = get_config().recordings_dir / "meeting_99.neura"
+    part1 = (np.random.default_rng(1).standard_normal(16000) * 3000).astype(np.int16).tobytes()
+    part2 = (np.random.default_rng(2).standard_normal(7001) * 3000).astype(np.int16).tobytes()
+
+    w = EncryptedAudioWriter(path)
+    w.write(part1)
+    w.close()
+    w = EncryptedAudioWriter(path)  # resume (reconnect after crash/drop)
+    w.write(part2)
+    w.close()
+
+    plain = part1 + part2
+    assert pcm_size(path) == len(plain)
+    assert read_pcm(path) == plain
+    # random access from an odd offset (Range playback path)
+    assert read_pcm_range(path, 12345, 999) == plain[12345:12345 + 999]
+    # the file on disk is not plaintext
+    on_disk = path.read_bytes()
+    assert plain[:64] not in on_disk
+
+
+def test_crash_recovery_resumes_live_meeting(client):
+    """A meeting still 'live' at startup (crash) is flipped to processing and
+    its quality pass queued — the sealed recording needs no finalization."""
+    from neurai.audio.session import recover_crashed_meetings
     from neurai.config import get_config
     from neurai.db import get_db
+    from neurai.security.audiocrypt import EncryptedAudioWriter
 
     signup(client, "admin")
     meeting_id = client.post("/api/meetings", json={"title": "جلسه قطع برق"}).json()["id"]
-    get_db().execute("UPDATE meetings SET status='live' WHERE id=?", (meeting_id,))
-
     cfg = get_config()
-    pcm = (np.random.default_rng(1).standard_normal(16000 * 2) * 3000).astype(np.int16)
-    (cfg.recordings_dir / f"meeting_{meeting_id}.pcm").write_bytes(pcm.tobytes())
+    path = cfg.recordings_dir / f"meeting_{meeting_id}.neura"
+    w = EncryptedAudioWriter(path)
+    w.write((np.random.default_rng(1).standard_normal(16000 * 2) * 3000).astype(np.int16).tobytes())
+    w.close()
+    get_db().execute("UPDATE meetings SET status='live', audio_path=? WHERE id=?",
+                     (str(path), meeting_id))
 
-    recovered = recover_orphaned_recordings()
-    assert recovered == [meeting_id]
-
+    assert recover_crashed_meetings() == [meeting_id]
     meeting = get_db().query_one("SELECT * FROM meetings WHERE id=?", (meeting_id,))
     assert meeting["status"] == "processing"
-    wav = cfg.recordings_dir / f"meeting_{meeting_id}.wav"
-    assert wav.exists()
-    import wave
-
-    with wave.open(str(wav), "rb") as w:
-        assert w.getframerate() == 16000
-        assert w.getnframes() == len(pcm)
     job = get_db().query_one("SELECT * FROM jobs WHERE kind='quality_pass' ORDER BY id DESC")
     assert job is not None
+
+
+def test_database_is_encrypted_at_rest(app_env):
+    """With the bundled SQLCipher driver, the DB file is unreadable as plain
+    SQLite (D4: default-on, day one)."""
+    import sqlite3
+
+    import pytest
+
+    from neurai.config import get_config
+    from neurai.db import get_db
+
+    db = get_db()
+    assert db.encrypted is True
+    db.execute("INSERT INTO settings(key, value) VALUES('probe', 'x')")
+    plain = sqlite3.connect(str(get_config().db_path))
+    with pytest.raises(sqlite3.DatabaseError):
+        plain.execute("SELECT * FROM settings").fetchall()
+    plain.close()
 
 
 def test_confidential_meeting_forced_local_and_unindexed(client):
@@ -119,15 +161,15 @@ def test_true_deletion_removes_everything(client):
     )
     anyio.run(index_text, admin_id, "transcript", meeting_id, "محتوای حساس جلسه")
     cfg = get_config()
-    wav = cfg.recordings_dir / f"meeting_{meeting_id}.wav"
-    wav.write_bytes(b"RIFF....fakewav")
-    db.execute("UPDATE meetings SET audio_path=? WHERE id=?", (str(wav), meeting_id))
+    audio = cfg.recordings_dir / f"meeting_{meeting_id}.neura"
+    audio.write_bytes(b"NRAI1\x00" + b"\x00" * 16 + b"ciphertext")
+    db.execute("UPDATE meetings SET audio_path=? WHERE id=?", (str(audio), meeting_id))
     client.post(f"/api/meetings/{meeting_id}/bookmarks", json={"t_ms": 10})
 
     assert client.delete(f"/api/meetings/{meeting_id}").json() == {"ok": True}
 
     assert client.get(f"/api/meetings/{meeting_id}").status_code == 404
-    assert not wav.exists()
+    assert not audio.exists()
     assert db.query("SELECT * FROM transcript_segments WHERE meeting_id=?", (meeting_id,)) == []
     assert db.query("SELECT * FROM bookmarks WHERE meeting_id=?", (meeting_id,)) == []
     assert db.query("SELECT * FROM rag_chunks WHERE kind='transcript' AND ref_id=?", (meeting_id,)) == []

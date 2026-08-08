@@ -17,15 +17,15 @@ dependencies = [
     "python-multipart>=0.0.9",
     "numpy>=1.24",
     "argon2-cffi>=23.1",
+    # Encryption at rest is default-on (D4, Phase 1 exit criterion):
+    "cryptography>=42.0",       # audio files (AES-256-CTR)
+    "sqlcipher3-wheels>=0.5",   # SQLite database (SQLCipher)
 ]
 
 [project.optional-dependencies]
 # Heavy ML deps are opt-in; the server runs (with fake/degraded engines) without them.
 asr = ["faster-whisper>=1.0"]
 export = ["python-docx>=1.1"]
-# DB at-rest encryption (D4/D8): SQLCipher driver; the server logs a warning
-# and runs unencrypted (dev/CI only) when this is absent.
-encryption = ["sqlcipher3-wheels>=0.5"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.scripts]

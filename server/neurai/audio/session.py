@@ -148,14 +148,14 @@ class LiveSessionManager:
                 return self._sessions[meeting_id]
             if len(self._sessions) >= cfg.max_live_meetings:
                 raise MeetingBusyError()
-            wav_path = cfg.recordings_dir / f"meeting_{meeting_id}.wav"
-            session = LiveSession(meeting_id, owner_id, wav_path)
+            audio_path = cfg.recordings_dir / f"meeting_{meeting_id}.neura"
+            session = LiveSession(meeting_id, owner_id, audio_path)
             self._sessions[meeting_id] = session
             db = get_db()
             db.execute(
                 "UPDATE meetings SET status='live', started_at=datetime('now'), audio_path=? "
                 "WHERE id=?",
-                (str(wav_path), meeting_id),
+                (str(audio_path), meeting_id),
             )
             return session
 
@@ -178,30 +178,26 @@ class LiveSessionManager:
         queue.notify()
 
 
-def recover_orphaned_recordings() -> list[int]:
-    """Startup pass (D2): a crash mid-meeting leaves meeting_N.pcm behind.
-    Finalize it into a playable WAV, mark the meeting for processing, and
-    queue its quality pass — a server crash must never lose a meeting."""
+def recover_crashed_meetings() -> list[int]:
+    """Startup pass (D2): a meeting still marked 'live' means the server died
+    mid-recording. The encrypted recording on disk is already complete up to
+    the crash (every chunk was fsynced, no finalization step exists), so
+    recovery is: flip to processing and queue the quality pass."""
     from neurai.jobs import get_job_queue
+    from neurai.security.audiocrypt import pcm_size
 
-    cfg = get_config()
     db = get_db()
     recovered: list[int] = []
-    for pcm_path in sorted(cfg.recordings_dir.glob("meeting_*.pcm")):
-        m = re.match(r"meeting_(\d+)\.pcm$", pcm_path.name)
-        if not m:
+    for row in db.query("SELECT id, audio_path FROM meetings WHERE status='live'"):
+        meeting_id = row["id"]
+        path = Path(row["audio_path"]) if row["audio_path"] else None
+        if path is None or not path.exists() or pcm_size(path) == 0:
+            db.execute("UPDATE meetings SET status='failed' WHERE id=?", (meeting_id,))
             continue
-        meeting_id = int(m.group(1))
-        wav_path = pcm_path.with_suffix(".wav")
-        if pcm_path.stat().st_size == 0:
-            pcm_path.unlink(missing_ok=True)
-            continue
-        _write_wav_from_pcm(pcm_path, wav_path)
-        pcm_path.unlink(missing_ok=True)
         db.execute(
-            "UPDATE meetings SET status='processing', audio_path=?, "
+            "UPDATE meetings SET status='processing', "
             "ended_at=COALESCE(ended_at, datetime('now')) WHERE id=?",
-            (str(wav_path), meeting_id),
+            (meeting_id,),
         )
         get_job_queue().enqueue("quality_pass", {"meeting_id": meeting_id}, priority=2)
         recovered.append(meeting_id)

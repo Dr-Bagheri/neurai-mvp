@@ -2,7 +2,6 @@
 Persian post-processing → authoritative transcript replaces the live one."""
 from __future__ import annotations
 
-import wave
 from pathlib import Path
 from typing import Any
 
@@ -21,13 +20,14 @@ async def run_quality_pass(payload: dict[str, Any]) -> None:
     meeting = db.query_one("SELECT * FROM meetings WHERE id=?", (meeting_id,))
     if meeting is None:
         return
-    wav_path = meeting["audio_path"]
-    if not wav_path or not Path(wav_path).exists():
+    audio_path = meeting["audio_path"]
+    if not audio_path or not Path(audio_path).exists():
         db.execute("UPDATE meetings SET status='failed' WHERE id=?", (meeting_id,))
         raise RuntimeError(f"recording missing for meeting {meeting_id}")
 
-    with wave.open(wav_path, "rb") as w:
-        pcm = w.readframes(w.getnframes())
+    from neurai.security.audiocrypt import read_pcm
+
+    pcm = read_pcm(audio_path)
 
     engine = get_quality_engine()
     segments = await asyncio.to_thread(engine.transcribe, pcm, 0, meeting["language"])
@@ -35,7 +35,7 @@ async def run_quality_pass(payload: dict[str, Any]) -> None:
     # Diarize (room mode). Per-participant mode gets exact labels at capture
     # time, so diarization is skipped.
     if meeting["capture_mode"] == "room":
-        turns = await asyncio.to_thread(get_diarizer().diarize, wav_path)
+        turns = await asyncio.to_thread(get_diarizer().diarize, audio_path)
         for seg in segments:
             seg.speaker_label = "S1"  # default when diarizer returns nothing
         if turns:

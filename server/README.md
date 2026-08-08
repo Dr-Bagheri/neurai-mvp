@@ -73,14 +73,24 @@ gate on side-effectful skills, and the append-only audit log.
 ## Security hardening in place (D4/D8)
 
 - argon2id password hashes (scrypt verify-fallback), login lockout backoff.
-- Secrets (OpenRouter key, at-rest DB key) in a **DPAPI-backed store** under
+- Secrets (OpenRouter key, at-rest keys) in a **DPAPI-backed store** under
   `<data>/secrets/` — never in the DB, config files, or repo.
-- **Crash-safe recording:** audio chunks are fsynced to a raw `.pcm` as they
-  arrive; orphaned recordings are finalized + queued for the quality pass at
-  next startup.
-- **Versioned SQL migrations from 001** (`neurai/db/migrations/`).
-- DB **at-rest encryption** via SQLCipher when `pip install -e .[encryption]`
-  is present (warns loudly when absent — dev/CI only).
+- **Encryption at rest, default-on (Phase 1 exit criterion):**
+  - Database via **SQLCipher** (`sqlcipher3-wheels`, a base dependency).
+  - Recordings as sealed **AES-256-CTR** files (`meeting_N.neura`, see
+    `neurai/security/audiocrypt.py`). CTR was chosen because it preserves
+    both invariants at once: chunks are still encrypted + fsynced the moment
+    they arrive (crash-safe, D2 — no finalization step exists to lose), and
+    byte-offset random access keeps Range-seekable playback (the WAV
+    container is synthesized at serving time).
+- **Crash recovery:** meetings still `live` at startup flip to processing and
+  their quality pass is queued — the sealed recording is already complete up
+  to the crash.
+- **Versioned SQL migrations from 001** (`neurai/db/migrations/`; steward
+  ruling: numbered plain-SQL runner, no ORM). Never edit a shipped migration —
+  every schema change is a new numbered file.
+- **True deletion (D4):** deleting a meeting removes transcript, audio,
+  exports, and embeddings/search entries together.
 - Per-meeting **sensitivity**: «محرمانه» meetings are forced local-only and
   excluded from cross-meeting indexing.
 

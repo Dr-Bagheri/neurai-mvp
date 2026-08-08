@@ -3,10 +3,11 @@ notes, audio playback (Range-capable), summaries, exports. All queries are
 owner-scoped (D7 rule 1)."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from neurai.audio.session import MeetingBusyError, get_session_manager
@@ -111,14 +112,10 @@ def delete_meeting(meeting_id: int, user: CurrentUser = Depends(current_user)):
         "DELETE FROM rag_chunks WHERE owner_id=? AND kind='transcript' AND ref_id=?",
         (user.id, meeting_id),
     )
-    # audio: finalized wav, any crash-orphaned pcm, and exported files
+    # audio (the sealed .neura recording) and exported files
     cfg = get_config()
-    for path in (
-        Path(meeting["audio_path"]) if meeting["audio_path"] else None,
-        cfg.recordings_dir / f"meeting_{meeting_id}.pcm",
-    ):
-        if path is not None:
-            path.unlink(missing_ok=True)
+    if meeting["audio_path"]:
+        Path(meeting["audio_path"]).unlink(missing_ok=True)
     shutil.rmtree(cfg.exports_dir / str(meeting_id), ignore_errors=True)
     # row + cascades (segments, speaker names, bookmarks, notes, summaries);
     # action_items keep living as user-owned objects (meeting_id → NULL)
@@ -199,14 +196,77 @@ def relabel_speaker(meeting_id: int, body: RelabelBody, user: CurrentUser = Depe
 
 
 # -- audio playback (audio-linked transcript, D2 UX) -----------------------------
+#
+# Recordings are AES-CTR-encrypted at rest (D4). The WAV container is
+# synthesized here: 44-byte header + decrypted PCM, streamed with Range
+# support so the player can seek to any sentence without the server
+# decrypting the whole meeting.
+
+_WAV_HEADER_LEN = 44
+
+
+def _wav_header(pcm_len: int) -> bytes:
+    import struct
+
+    from neurai.audio.asr import SAMPLE_RATE
+
+    return (
+        b"RIFF" + struct.pack("<I", 36 + pcm_len) + b"WAVE"
+        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, SAMPLE_RATE, SAMPLE_RATE * 2, 2, 16)
+        + b"data" + struct.pack("<I", pcm_len)
+    )
+
 
 @router.get("/{meeting_id}/audio")
-def get_audio(meeting_id: int, user: CurrentUser = Depends(current_user)):
+def get_audio(meeting_id: int, request: Request, user: CurrentUser = Depends(current_user)):
+    from neurai.security import audiocrypt
+
     meeting = _own_meeting(user, meeting_id)
-    if not meeting["audio_path"] or not Path(meeting["audio_path"]).exists():
+    path = meeting["audio_path"]
+    if not path or not Path(path).exists():
         raise HTTPException(404, "فایل صوتی موجود نیست")
-    # FileResponse handles HTTP Range → the player can seek to any sentence.
-    return FileResponse(meeting["audio_path"], media_type="audio/wav")
+
+    pcm_len = audiocrypt.pcm_size(path)
+    total = _WAV_HEADER_LEN + pcm_len
+    header = _wav_header(pcm_len)
+
+    start, end = 0, total - 1
+    range_header = request.headers.get("range")
+    status = 200
+    if range_header:
+        m = re.match(r"bytes=(\d*)-(\d*)$", range_header.strip())
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start = int(m.group(1))
+                if m.group(2):
+                    end = min(int(m.group(2)), total - 1)
+            else:  # suffix range: last N bytes
+                start = max(0, total - int(m.group(2)))
+            if start > end or start >= total:
+                raise HTTPException(416, headers={"Content-Range": f"bytes */{total}"})
+            status = 206
+
+    def stream():
+        pos = start
+        if pos < _WAV_HEADER_LEN:
+            yield header[pos:min(end + 1, _WAV_HEADER_LEN)]
+            pos = _WAV_HEADER_LEN
+        chunk_size = 1 << 18
+        while pos <= end:
+            n = min(chunk_size, end - pos + 1)
+            data = audiocrypt.read_pcm_range(path, pos - _WAV_HEADER_LEN, n)
+            if not data:
+                break
+            yield data
+            pos += len(data)
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(end - start + 1),
+    }
+    if status == 206:
+        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+    return StreamingResponse(stream(), status_code=status, media_type="audio/wav", headers=headers)
 
 
 # -- bookmarks («علامت بزن») ------------------------------------------------------
