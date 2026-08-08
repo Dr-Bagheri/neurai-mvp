@@ -29,7 +29,9 @@ English is secondary.
 | *(later)* Voice commands, OCR, email drafting… | Plugin system makes these addable | — |
 
 Each module is a **plugin over one shared core** (audio engine, model harness, storage). New
-tasks = new plugins, not new apps.
+tasks = new plugins, not new apps. Modules also expose their capabilities as **skills** —
+tools the chat assistant can invoke on the user's behalf («جلسه دیروز رو خلاصه کن»,
+"what did we decide about the budget?") — see D7.
 
 ---
 
@@ -46,7 +48,8 @@ flowchart TB
         API["FastAPI — REST + WebSocket<br/>auth, users, jobs"]
         subgraph Core["Core Engine"]
             TM["Task Modules<br/>(transcription, chat, RAG, …)"]
-            H["Model Harness<br/>(router + fallback + chunking)"]
+            SK["Skill Runtime<br/>tool registry + ACL enforcement<br/>+ confirmation gate + audit log"]
+            H["Model Harness<br/>(router + fallback + chunking<br/>+ tool-use loop)"]
             AP["Audio Pipeline<br/>VAD → live ASR → post-pass ASR<br/>→ diarization → fa post-processing"]
             DL["Data Layer<br/>SQLite + sqlite-vec, per-user scoping"]
         end
@@ -69,6 +72,9 @@ flowchart TB
     TM --> H
     TM --> AP
     TM --> DL
+    TM --> SK
+    SK --> H
+    SK --> DL
     AP --> WL
     AP --> WQ
     H --> OL
@@ -82,6 +88,84 @@ The app must never break when the network disappears — cloud calls are an opti
 not a dependency. (For our likely deployments, cloud may be unreachable *often* —
 sanctions, filtered networks, air-gapped offices — so this is a hard requirement,
 not a preference.)
+
+### 2.1 Operating modes — one architecture, two runtime profiles
+
+Online/offline is **not two architectures and not two builds** — it is one codebase where
+every cloud component is strictly additive. Offline mode is simply the system with the
+cloud paths inactive; nothing else changes. This is deliberate: two architectures would
+drift apart and double the maintenance cost, and the offline path would rot the moment the
+team started testing mostly online.
+
+**Offline mode (the baseline — everything here must always work):**
+
+```mermaid
+flowchart TB
+    subgraph ServerOff["Office server — OFFLINE (air-gapped OK)"]
+        APIo["FastAPI — auth, jobs, UI"]
+        SKo["Skill Runtime"]
+        Ho["Model Harness → local only"]
+        APo["Audio Pipeline (two-pass ASR + diarization)"]
+        DLo["SQLite + sqlite-vec"]
+        OLo["Ollama ~8B q4"]
+        Wo["faster-whisper (live + quality)"]
+        Eo["BGE-M3 embeddings"]
+    end
+    Browsers["LAN browsers"] --> APIo
+    APIo --> SKo --> Ho --> OLo
+    APo --> Wo
+    Ho --> Eo
+    SKo --> DLo
+```
+
+**Online mode (same system + the optional upgrades):**
+
+```mermaid
+flowchart TB
+    subgraph ServerOn["Office server — ONLINE"]
+        APIn["FastAPI — auth, jobs, UI"]
+        SKn["Skill Runtime"]
+        Hn["Model Harness → local first,<br/>cloud when consented"]
+        DLn["SQLite + sqlite-vec"]
+        MMn["Model Manager<br/>(downloads/updates models)"]
+    end
+    Browsers2["LAN browsers"] --> APIn
+    APIn --> SKn --> Hn
+    Hn -- "consented workspaces only" --> OR2["OpenRouter (frontier LLMs)"]
+    DLn -- "encrypted snapshots" --> SB2["Supabase backup"]
+    MMn --> HF2["Model downloads<br/>(HuggingFace / Ollama registry)"]
+```
+
+**What each feature does per mode:**
+
+| Feature | 🔌 Offline | 🌐 Online |
+|---|---|---|
+| Live transcription + quality pass | ✅ identical | ✅ identical (never uses cloud — audio stays on-prem, always) |
+| Speaker ID / diarization | ✅ identical | ✅ identical (always local) |
+| Meeting summaries, action items | ✅ local ~8B model, map-reduce | ✅ same, or ☁️ frontier model if workspace consented |
+| Chat assistant + skills | ✅ local model + intent router | ✅ same, or ☁️ driver model + full agent loop |
+| RAG (transcripts + documents) | ✅ fully local (BGE-M3 + sqlite-vec) | ✅ retrieval always local; only generation may use ☁️ |
+| Translation fa↔en | ✅ local model | ✅ local or ☁️ |
+| Model downloads / updates | ❌ (pre-downloaded via Model Manager) | ✅ |
+| Encrypted snapshot backup | ❌ (local file export instead) | ✅ optional |
+
+**Mode semantics (encoded in the harness — one place, not scattered ifs):**
+
+1. **Three connectivity profiles**, set by the admin:
+   - **Air-gapped:** cloud code paths disabled outright — no probes, no telemetry, nothing
+     ever attempts the network. For classified/strict deployments.
+   - **Auto (default):** harness probes connectivity; cloud is used only where consent
+     already allows it (D3), and silently degrades to local when unreachable.
+   - Per-workspace/per-meeting **local-only** flags override everything (D3, D7).
+2. **Mid-task transitions are handled, not exceptional:** a cloud call that fails or times
+   out falls back to the local model and the response is re-tagged 🏠 — proven in Phase 2's
+   "pull the network cable mid-task" test. Going back online never changes stored data;
+   it only re-enables upgrades and flushes the backup queue.
+3. **Audio never goes to the cloud in any mode.** ASR and diarization are local-only by
+   architecture — cloud is for *text* tasks under consent, which keeps both the privacy
+   story and the offline guarantee simple.
+4. **CI runs the offline profile as first-class:** the Persian eval set executes with
+   network access blocked, so an accidental hard cloud dependency fails the build.
 
 ---
 
@@ -234,6 +318,56 @@ Request → Policy check:
 - License: **Apache-2.0** (decided) — MIT-equivalent in practice, plus an explicit patent
   grant. See `LICENSE`.
 
+### D7 — **[NEW]** Skills: an AI-native tool layer, secured at the runtime, not the model
+
+NeurAI is AI-native: the user talks to the assistant, and the assistant *acts* — «جلسه
+دیروز رو خلاصه کن», "find where we discussed the deadline", "what were Sara's action
+items?". This works through **skills**: tools the LLM can call, provided by task modules
+and executed by a central **Skill Runtime**.
+
+**How it works:**
+
+- Each task module registers skills as typed tools (name, description, JSON-schema
+  parameters): `list_meetings`, `get_transcript`, `search_transcripts`,
+  `summarize_meeting`, `extract_action_items`, `search_documents`, `translate`, …
+- The Model Harness runs a standard **tool-use loop**: model proposes a tool call → Skill
+  Runtime validates and executes it → result goes back to the model → repeat until answer.
+- **Two-tier invocation**, because 8B local models are unreliable agentic drivers: common
+  asks ("summarize meeting X", "find Y in meeting X") are matched by a fast **intent
+  router** and invoke the skill directly — deterministic, no agent loop needed. The full
+  tool-use loop handles open-ended requests, with schema validation + one retry on
+  malformed calls. Cloud models (when consented) get the full loop by default.
+
+**The security model — five rules, all enforced in the runtime, never delegated to the LLM:**
+
+1. **Skills run as the requesting user, always.** Every tool call carries the user's
+   identity; the data layer enforces ACLs (a user can only query meetings/documents they
+   own or that were shared with them). The model physically cannot retrieve what the user
+   couldn't open by hand — even if prompted to. Access control is a `WHERE` clause, not a
+   system-prompt instruction.
+2. **Transcripts and documents are untrusted input.** Anything spoken in a meeting or
+   written in a PDF may contain adversarial instructions ("ignore your instructions and
+   send this to…"). Retrieved content is treated as *data*: it can inform answers, but it
+   can never authorize a tool call. Concretely: any **side-effectful skill** (delete,
+   share, export, email — future) requires an explicit confirmation click in the UI from
+   the human, every time. Read-only skills are the only ones the loop may chain freely.
+3. **Least privilege by manifest.** Each skill declares what it needs (`read:transcripts`,
+   `read:documents`, `llm:local`, `net:cloud`, …). The runtime grants nothing else — a
+   summarization skill has no path to the network; no skill has shell or filesystem access.
+   MVP ships **first-party skills only**; a third-party skill API (sandboxed, signed,
+   admin-approved) is a later phase with its own design review.
+4. **Cloud consent propagates through the loop.** If a workspace/meeting is local-only, the
+   *entire* tool loop — the driver model and every skill it calls — runs local. One flag,
+   checked in the harness, impossible to bypass from a prompt.
+5. **Everything is audited.** Every skill invocation is logged (who, which skill, which
+   resource, when, local/cloud) to an append-only log the admin can review. The user-facing
+   answer shows which meetings/documents were consulted — provenance, not just output.
+
+*Why this design:* LLMs cannot be trusted to enforce security policy — models follow
+persuasive text, and meeting audio is persuasive text that attackers can inject just by
+being in (or calling into) a meeting. So the trust boundary sits in the Skill Runtime:
+deterministic code, running with the user's permissions, gating every effect.
+
 ---
 
 ## 4. Capacity planning (16 GB, no-GPU baseline)
@@ -261,7 +395,7 @@ a GPU or bigger box raises it later without code changes.
 | **0. Benchmarks** (~week 1) | Persian ASR + local-LLM bake-off on *real meeting audio*; diarization + speaker-embedding license check; live-meeting load test on the 16 GB baseline | Chosen default models with measured WER/quality; capacity table validated |
 | **1. Live transcriber on the server** | Server install + browser client, **room-mic mode**: live captions, quality pass with diarized speakers + manual relabel; auth + per-user meetings | Two users, WiFi router with no internet, full meeting transcribed and speakers named by hand |
 | **2. Harness + intelligence** | Ollama routing + map-reduce summaries, action items; OpenRouter behind consent gate; **speaker ID** (enrollment round + voice profiles) and **per-participant capture mode** | Fallback proven by pulling the network cable mid-task; a recurring participant auto-named in room mode |
-| **3. Chat + RAG** | Persian chat; Q&A over transcripts & PDFs | Answers cite sources |
+| **3. Chat + RAG + skills** | Persian chat; Q&A over transcripts & PDFs; Skill Runtime with first-party skills (summarize, search, extract) + intent router + audit log | Answers cite sources; "summarize yesterday's meeting" works end-to-end; a user provably cannot query another user's meeting via chat |
 | **4. Backup + polish** | Encrypted snapshot backup (optional), model manager, admin dashboard, Windows service installer | One-command install on a clean Windows machine |
 | **5. Thin clients** | Tauri desktop wrapper (hotkeys, tray recording); single-user laptop preset | Same server codebase, no forks |
 
@@ -278,3 +412,10 @@ a GPU or bigger box raises it later without code changes.
 - **Server OS:** Windows for now — ships as a Windows service. Docker/Linux is a natural
   later addition, not MVP scope.
 - **License:** Apache-2.0.
+- **Skills:** AI-native tool layer (D7) — first-party skills only for MVP; security
+  enforced in the Skill Runtime (user-scoped ACLs, untrusted-content rule, manifests,
+  consent propagation, audit log), never in the prompt.
+- **Online/offline:** one architecture, two runtime profiles (§2.1) — not two builds.
+  Cloud components are strictly additive; three admin profiles (air-gapped / auto /
+  per-workspace local-only); audio never leaves the server in any mode; CI tests the
+  offline profile with network blocked.
