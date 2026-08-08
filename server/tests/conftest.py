@@ -38,6 +38,10 @@ def app_env(tmp_path, monkeypatch):
     session_mod._manager = None
     queue_mod._queue = None
     conn_mod.reset_probe_cache()
+
+    from neurai.auth.security import login_limiter
+
+    login_limiter._failures.clear()
     yield
     db = db_mod._db
     if db is not None:

@@ -94,10 +94,14 @@ class OpenRouterBackend:
     source = "cloud"
 
     def __init__(self, model: str | None = None):
+        from neurai.security import get_secret
+
         cfg = get_config()
         db = get_db()
         self.base_url = cfg.openrouter_url.rstrip("/")
-        self.api_key = db.get_setting("openrouter_key") or cfg.openrouter_key
+        # D8: the API key lives in the DPAPI-backed secret store, never in the
+        # settings table or config files. Env var is a dev-only override.
+        self.api_key = get_secret("openrouter_key") or cfg.openrouter_key
         self.model = model or db.get_setting("cloud_chat_model") or cfg.cloud_chat_model
         if not self.api_key:
             raise BackendError("OpenRouter API key not configured")

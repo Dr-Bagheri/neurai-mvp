@@ -13,15 +13,14 @@ from neurai.harness import connectivity
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 # Settings the admin may change at runtime; anything else stays env/installer-owned.
+# openrouter_key is NOT here — secrets go to the DPAPI store (D8), not the DB.
 _MUTABLE_SETTINGS = {
     "connectivity_profile",   # air_gapped | auto
     "cloud_enabled",          # "0" | "1"
-    "openrouter_key",
     "cloud_chat_model",
     "local_chat_model",
     "embed_model",
 }
-_SECRET_SETTINGS = {"openrouter_key"}
 
 
 class SettingsUpdate(BaseModel):
@@ -35,6 +34,8 @@ class SettingsUpdate(BaseModel):
 
 @router.get("/settings")
 def get_settings(admin: CurrentUser = Depends(current_admin)):
+    from neurai.security import get_secret
+
     db = get_db()
     cfg = get_config()
     out = {
@@ -43,16 +44,25 @@ def get_settings(admin: CurrentUser = Depends(current_admin)):
         "local_chat_model": db.get_setting("local_chat_model") or cfg.local_chat_model,
         "cloud_chat_model": db.get_setting("cloud_chat_model") or cfg.cloud_chat_model,
         "embed_model": db.get_setting("embed_model") or cfg.embed_model,
-        "openrouter_key_set": bool(db.get_setting("openrouter_key") or cfg.openrouter_key),
+        "openrouter_key_set": bool(get_secret("openrouter_key") or cfg.openrouter_key),
     }
     return out
 
 
 @router.put("/settings")
 def update_settings(body: SettingsUpdate, admin: CurrentUser = Depends(current_admin)):
+    from neurai.security import delete_secret, set_secret
+
     db = get_db()
     data = body.model_dump(exclude_none=True)
     for key, value in data.items():
+        if key == "openrouter_key":
+            # Secret path (D8): DPAPI-backed store; empty string clears it.
+            if value:
+                set_secret("openrouter_key", str(value))
+            else:
+                delete_secret("openrouter_key")
+            continue
         if key not in _MUTABLE_SETTINGS:
             continue
         if key == "cloud_enabled":

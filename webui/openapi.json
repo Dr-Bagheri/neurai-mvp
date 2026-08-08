@@ -293,6 +293,45 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Delete Meeting",
+        "description": "True deletion (D4): removes the transcript, audio, embeddings, and\nsearch-index entries together — not just the DB row.",
+        "operationId": "delete_meeting_api_meetings__meeting_id__delete",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Meeting Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/meetings/{meeting_id}/start": {
@@ -1770,6 +1809,12 @@
               }
             ],
             "title": "Series Id"
+          },
+          "sensitivity": {
+            "type": "string",
+            "pattern": "^(normal|confidential)$",
+            "title": "Sensitivity",
+            "default": "normal"
           }
         },
         "type": "object",
@@ -1803,6 +1848,10 @@
           "allow_cloud": {
             "type": "boolean",
             "title": "Allow Cloud"
+          },
+          "sensitivity": {
+            "type": "string",
+            "title": "Sensitivity"
           },
           "series_id": {
             "anyOf": [
@@ -1850,6 +1899,7 @@
           "status",
           "language",
           "allow_cloud",
+          "sensitivity",
           "series_id",
           "started_at",
           "ended_at",

@@ -1,8 +1,8 @@
 # NeurAI — session guide
 
 NeurAI is a Persian-first, offline-capable, on-premise AI meeting-assistant platform
-(FastAPI server on Windows + browser clients over LAN). **No application code exists yet**
-— we are in design/early-build phase.
+(FastAPI server on Windows + browser clients over LAN). Early build phase: the server
+engine (`server/`) and webui (`webui/`) skeletons exist; models are not wired yet.
 
 ## Source of truth
 
@@ -59,3 +59,15 @@ is the only one with working GitHub access (github.com/Dr-Bagheri/neurai-mvp).
   OS-neutral — Windows installer and Linux Docker are packaging layers only (D10). Next up:
   **Phase 0** — Persian ASR bake-off on real meeting audio, diarization/speaker-embedding
   license check, load test on a 16 GB no-GPU machine. Results go in `docs/`.
+- 2026-08-08: `server/` engine built (D1–D5, D7 + parts of D8): auth/sessions
+  (argon2 + lockout), versioned SQL migrations, two-pass audio pipeline with crash-safe
+  recording + pluggable ASR (fake engine for CI), consent-gated harness with map-reduce
+  and cloud→local fallback, Skill Runtime (ACL/manifests/confirmation gate/audit) +
+  intent router, owner-scoped RAG, صورتجلسه/SRT export, job queue, admin API, DPAPI
+  secret store, SQLCipher hook. 37 offline tests green (`server/tests/`). OpenAPI
+  contract exported to `webui/openapi.json`. Migration deviation RESOLVED by steward
+  ruling: numbered-SQL runner accepted, D4 amended `[REVISED]` (no Alembic/ORM).
+  Scope ruling: DB **and audio** at-rest encryption are Phase 1 exit criteria
+  (default-on before any real meeting data; dev/CI may run unencrypted on fake data).
+  Still Phase 4 as planned: retention policy, TLS/installer, signed bundles,
+  structured JSON logs (D8/D9 remainder).

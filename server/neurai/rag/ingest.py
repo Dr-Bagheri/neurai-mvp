@@ -36,8 +36,11 @@ def transcript_text(meeting_id: int, preferred_pass: str = "quality") -> str:
 async def index_transcript_job(payload: dict[str, Any]) -> None:
     meeting_id = int(payload["meeting_id"])
     db = get_db()
-    meeting = db.query_one("SELECT owner_id FROM meetings WHERE id=?", (meeting_id,))
+    meeting = db.query_one("SELECT owner_id, sensitivity FROM meetings WHERE id=?", (meeting_id,))
     if meeting is None:
+        return
+    if meeting["sensitivity"] == "confidential":
+        # D4: «محرمانه» meetings stay out of cross-meeting search entirely.
         return
     text = transcript_text(meeting_id)
     if text:

@@ -36,6 +36,12 @@ def _constraints(ctx: SkillContext) -> Constraints:
     return Constraints(allow_cloud=ctx.allow_cloud)  # rule 4: consent propagates
 
 
+def _meeting_constraints(ctx: SkillContext, meeting) -> Constraints:
+    # D3: cloud needs BOTH the caller's consent and the meeting's own opt-in;
+    # confidential meetings always carry allow_cloud=0 (D4).
+    return Constraints(allow_cloud=ctx.allow_cloud and bool(meeting["allow_cloud"]))
+
+
 # -- read skills ---------------------------------------------------------------
 
 async def list_meetings(ctx: SkillContext, params: dict[str, Any]) -> dict[str, Any]:
@@ -104,7 +110,7 @@ async def summarize_meeting(ctx: SkillContext, params: dict[str, Any]) -> dict[s
     if not text:
         raise SkillError("رونوشتی برای این جلسه موجود نیست")
     result = await get_harness().summarize_long(
-        "summarize", _SUMMARY_PROMPT, text, _constraints(ctx),
+        "summarize", _SUMMARY_PROMPT, text, _meeting_constraints(ctx, meeting),
     )
     summary = fa_normalize(result.text)
     get_db().insert(
@@ -142,7 +148,7 @@ async def extract_action_items(ctx: SkillContext, params: dict[str, Any]) -> dic
     if not text:
         raise SkillError("رونوشتی برای این جلسه موجود نیست")
     result = await get_harness().summarize_long(
-        "summarize", _ACTION_ITEMS_PROMPT, text, _constraints(ctx),
+        "summarize", _ACTION_ITEMS_PROMPT, text, _meeting_constraints(ctx, meeting),
         reduce_prompt="فهرست‌های اقدام زیر را ادغام کن و موارد تکراری را حذف کن. فقط JSON آرایه بده.",
     )
     items = _parse_json_array(result.text)
@@ -205,7 +211,7 @@ async def merge_notes(ctx: SkillContext, params: dict[str, Any]) -> dict[str, An
         "یادداشت‌های شخصی کاربر و رونوشت جلسه را در صورت‌جلسه‌ای ساخت‌یافته و رسمی ادغام کن. "
         f"یادداشت‌های کاربر:\n{notes_text}\n\nرونوشت جلسه در پیام کاربر می‌آید.",
         text or "(رونوشت در دسترس نیست)",
-        _constraints(ctx),
+        _meeting_constraints(ctx, meeting),
     )
     merged = fa_normalize(result.text)
     get_db().insert(

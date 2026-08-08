@@ -1,11 +1,7 @@
--- NeurAI schema v1. SQLite + WAL. Source of truth for all data (D4).
+-- NeurAI schema, migration 001. SQLite + WAL. Source of truth for all data (D4).
 -- Per-user scoping is the ACL primitive (D7 rule 1): every user-facing query
 -- filters on owner_id/user_id; sharing and workspaces are additive later.
-
-CREATE TABLE IF NOT EXISTS schema_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
+-- (schema_meta is created by the migration runner itself.)
 
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

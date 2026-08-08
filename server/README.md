@@ -70,6 +70,20 @@ gate on side-effectful skills, and the append-only audit log.
 .venv\Scripts\python scripts\export_openapi.py    # writes ../webui/openapi.json
 ```
 
+## Security hardening in place (D4/D8)
+
+- argon2id password hashes (scrypt verify-fallback), login lockout backoff.
+- Secrets (OpenRouter key, at-rest DB key) in a **DPAPI-backed store** under
+  `<data>/secrets/` — never in the DB, config files, or repo.
+- **Crash-safe recording:** audio chunks are fsynced to a raw `.pcm` as they
+  arrive; orphaned recordings are finalized + queued for the quality pass at
+  next startup.
+- **Versioned SQL migrations from 001** (`neurai/db/migrations/`).
+- DB **at-rest encryption** via SQLCipher when `pip install -e .[encryption]`
+  is present (warns loudly when absent — dev/CI only).
+- Per-meeting **sensitivity**: «محرمانه» meetings are forced local-only and
+  excluded from cross-meeting indexing.
+
 ## Deliberately not here yet
 
 - Real diarization/speaker-ID backends (interface in `audio/diarization.py`;

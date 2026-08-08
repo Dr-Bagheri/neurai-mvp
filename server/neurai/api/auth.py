@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from neurai.auth.deps import SESSION_COOKIE, CurrentUser, current_admin, current_user
-from neurai.auth.security import hash_password, new_session_token, verify_password
+from neurai.auth.security import hash_password, login_limiter, new_session_token, verify_password
 from neurai.config import get_config
 from neurai.db import get_db
 
@@ -76,10 +76,19 @@ def setup(body: Credentials, response: Response):
 
 @router.post("/login", response_model=UserOut)
 def login(body: Credentials, response: Response):
+    username = body.username.lower()
+    retry_after = login_limiter.retry_after(username)
+    if retry_after:
+        raise HTTPException(
+            429, "به دلیل تلاش‌های ناموفق، ورود موقتاً قفل شده است",
+            headers={"Retry-After": str(retry_after)},
+        )
     db = get_db()
-    row = db.query_one("SELECT * FROM users WHERE username=?", (body.username.lower(),))
+    row = db.query_one("SELECT * FROM users WHERE username=?", (username,))
     if row is None or not verify_password(body.password, row["password_hash"]):
+        login_limiter.record_failure(username)
         raise HTTPException(401, "نام کاربری یا رمز عبور نادرست است")
+    login_limiter.record_success(username)
     _set_cookie(response, _create_session(row["id"]))
     return UserOut(id=row["id"], username=row["username"],
                    display_name=row["display_name"], is_admin=bool(row["is_admin"]))

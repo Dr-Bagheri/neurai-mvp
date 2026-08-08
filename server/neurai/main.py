@@ -44,6 +44,14 @@ async def _lifespan(app: FastAPI):
     queue = get_job_queue()
     # §4: heavy jobs yield to a live meeting
     queue.live_meeting_active = get_session_manager().any_live
+
+    # D2: finalize any recording a crash left behind before jobs start
+    from neurai.audio.session import recover_orphaned_recordings
+
+    recovered = recover_orphaned_recordings()
+    if recovered:
+        log.warning("recovered %d crashed meeting recording(s): %s", len(recovered), recovered)
+
     await queue.start()
     log.info("NeurAI server %s ready (profile=%s)", __version__, cfg.connectivity_profile)
     yield

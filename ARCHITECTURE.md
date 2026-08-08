@@ -320,15 +320,22 @@ Request → Policy check:
   in one place — an attractive theft target. The SQLite database is encrypted (SQLCipher or
   equivalent) and audio files are encrypted on disk, with the key held by the service
   account (Windows DPAPI). Done from day one; retrofitting encryption after real data
-  exists is near-impossible.
+  exists is near-impossible. **Scope ruling:** dev/CI may run unencrypted (fake data
+  only), but encryption of *both* the database and audio files is **Phase 1 exit
+  criteria** — default-on in any build that touches real meeting data, never deferred to
+  polish.
 - **Data lifecycle:** per-deployment **retention policy** (default: audio kept 90 days,
   transcripts kept until deleted — both admin-configurable); **true deletion** removes the
   transcript, audio, embeddings, and search index entries together, not just the DB row;
   per-meeting **sensitivity levels** — a meeting marked «محرمانه» is local-only forever,
   excluded from cross-meeting search and from backups, visible only to explicitly named
   users.
-- **Schema migrations from migration 001:** versioned migrations (Alembic) from the first
-  table — on-premise means we can never fix a customer's database by hand.
+- **Schema migrations from migration 001 [REVISED]:** versioned, numbered **plain-SQL
+  migrations** (applied in order at startup, version tracked in `schema_meta`) — not
+  Alembic. The server stack deliberately uses plain `sqlite3` with no ORM so the SQLCipher
+  driver can be swapped in cleanly; Alembic would drag in SQLAlchemy for nothing. The
+  invariant is unchanged: every schema change ships as a numbered migration from 001,
+  because on-premise means we can never fix a customer's database by hand.
 - **[REVISED] Supabase scope cut from "sync" to "backup":** a bidirectional sync engine
   with offline replay is a project in itself (conflicts, migrations, partial failures).
   MVP+1 ships **client-side-encrypted snapshot backup/restore** instead — 90% of the value,
@@ -523,7 +530,7 @@ a GPU or bigger box raises it later without code changes.
 | Phase | Deliverable | Definition of done |
 |---|---|---|
 | **0. Benchmarks** (~week 1) | Persian ASR + local-LLM bake-off on *real meeting audio*; diarization + speaker-embedding license check; live-meeting load test on the 16 GB baseline | Chosen default models with measured WER/quality; capacity table validated |
-| **1. Live transcriber on the server** | Server install + browser client, **room-mic mode**: live captions, quality pass with diarized speakers + manual relabel; **audio-linked playback**; **in-meeting bookmarks**; auth + per-user meetings; crash-safe recording; encrypted DB from migration 001 | Two users, WiFi router with no internet, full meeting transcribed, speakers named by hand, any sentence plays its audio; **server killed mid-meeting → nothing lost, quality pass resumes** |
+| **1. Live transcriber on the server** | Server install + browser client, **room-mic mode**: live captions, quality pass with diarized speakers + manual relabel; **audio-linked playback**; **in-meeting bookmarks**; auth + per-user meetings; crash-safe recording; encrypted DB **and audio files** from migration 001 (default-on) | Two users, WiFi router with no internet, full meeting transcribed, speakers named by hand, any sentence plays its audio; **server killed mid-meeting → nothing lost, quality pass resumes** |
 | **2. Harness + intelligence** | Ollama routing + map-reduce summaries, action items; OpenRouter behind consent gate; **speaker ID** (enrollment round + voice profiles) and **per-participant capture mode**; **register conversion (گفتاری→نوشتاری)** + **minutes templates & صورتجلسه export** (Word/PDF/SRT) | Fallback proven by pulling the network cable mid-task; a recurring participant auto-named in room mode; a formal صورتجلسه exported from a real meeting |
 | **3. Chat + RAG + skills** | Persian chat; Q&A over transcripts & PDFs; Skill Runtime with first-party skills + intent router + audit log; **action-item tracker** (live objects, dashboard, resurfacing in recurring meetings); **cross-meeting search & series recaps**; **meeting notepad + notes merge** | Answers cite sources; "summarize yesterday's meeting" works end-to-end; a user provably cannot query another user's meeting via chat; an open action item from last week resurfaces in this week's meeting |
 | **4. Backup + polish** | Encrypted snapshot backup (optional), model manager, admin health page, **full Windows installer** (embedded runtime, zero prerequisites — D10), **signed offline update/model bundles**, retention + sensitivity levels; **system-audio capture** for online meetings (Skyroom/BBB/Meet/Zoom, bot-free) | "Next, next, finish" install on a clean Windows machine with no internet (using the offline bundle); an online meeting captured without a bot; **an air-gapped server updated from a USB bundle** |
@@ -564,7 +571,8 @@ a GPU or bigger box raises it later without code changes.
   offline profile with network blocked.
 - **Hardening & operations (D8, D9):** crash-safe recording; encryption at rest (SQLCipher
   + DPAPI-held keys); data lifecycle (retention, true deletion, «محرمانه» sensitivity
-  levels); Alembic migrations from 001; TLS + auth hygiene + signed releases; signed
+  levels); numbered-SQL migrations from 001 (not Alembic — no ORM in the stack);
+  TLS + auth hygiene + signed releases; signed
   offline update/model bundles for air-gapped sites; admin health page; structured local
   logs; **no telemetry, ever**.
 - **Competitive feature set (from market research):** adopted into phases 1–4 — audio-linked

@@ -22,6 +22,9 @@ class MeetingCreate(BaseModel):
     language: str = Field(default="fa", pattern="^(fa|en)$")
     allow_cloud: bool = False
     series_id: int | None = None
+    # D4 data lifecycle: «محرمانه» is local-only forever, excluded from
+    # cross-meeting indexing; allow_cloud is forced off for it.
+    sensitivity: str = Field(default="normal", pattern="^(normal|confidential)$")
 
 
 class MeetingOut(BaseModel):
@@ -31,6 +34,7 @@ class MeetingOut(BaseModel):
     status: str
     language: str
     allow_cloud: bool
+    sensitivity: str
     series_id: int | None
     started_at: str | None
     ended_at: str | None
@@ -50,7 +54,8 @@ def _to_out(row) -> MeetingOut:
     return MeetingOut(
         id=row["id"], title=row["title"], capture_mode=row["capture_mode"],
         status=row["status"], language=row["language"],
-        allow_cloud=bool(row["allow_cloud"]), series_id=row["series_id"],
+        allow_cloud=bool(row["allow_cloud"]), sensitivity=row["sensitivity"],
+        series_id=row["series_id"],
         started_at=row["started_at"], ended_at=row["ended_at"], created_at=row["created_at"],
     )
 
@@ -72,11 +77,12 @@ def create_meeting(body: MeetingCreate, user: CurrentUser = Depends(current_user
         )
         if series is None:
             raise HTTPException(404, "سری جلسات پیدا نشد")
+    allow_cloud = body.allow_cloud and body.sensitivity != "confidential"
     meeting_id = db.insert(
-        "INSERT INTO meetings(owner_id, title, capture_mode, language, allow_cloud, series_id) "
-        "VALUES(?,?,?,?,?,?)",
+        "INSERT INTO meetings(owner_id, title, capture_mode, language, allow_cloud, series_id, sensitivity) "
+        "VALUES(?,?,?,?,?,?,?)",
         (user.id, body.title, body.capture_mode, body.language,
-         int(body.allow_cloud), body.series_id),
+         int(allow_cloud), body.series_id, body.sensitivity),
     )
     return _to_out(db.query_one("SELECT * FROM meetings WHERE id=?", (meeting_id,)))
 
@@ -84,6 +90,40 @@ def create_meeting(body: MeetingCreate, user: CurrentUser = Depends(current_user
 @router.get("/{meeting_id}", response_model=MeetingOut)
 def get_meeting(meeting_id: int, user: CurrentUser = Depends(current_user)):
     return _to_out(_own_meeting(user, meeting_id))
+
+
+@router.delete("/{meeting_id}")
+def delete_meeting(meeting_id: int, user: CurrentUser = Depends(current_user)):
+    """True deletion (D4): removes the transcript, audio, embeddings, and
+    search-index entries together — not just the DB row."""
+    import shutil
+
+    from neurai.config import get_config
+
+    meeting = _own_meeting(user, meeting_id)
+    if get_session_manager().get(meeting_id) is not None:
+        raise HTTPException(409, "جلسه در حال ضبط است؛ ابتدا آن را متوقف کنید")
+
+    db = get_db()
+    # embeddings / search index (rag_chunks has no FK to meetings on purpose —
+    # delete explicitly so the index can never outlive the meeting)
+    db.execute(
+        "DELETE FROM rag_chunks WHERE owner_id=? AND kind='transcript' AND ref_id=?",
+        (user.id, meeting_id),
+    )
+    # audio: finalized wav, any crash-orphaned pcm, and exported files
+    cfg = get_config()
+    for path in (
+        Path(meeting["audio_path"]) if meeting["audio_path"] else None,
+        cfg.recordings_dir / f"meeting_{meeting_id}.pcm",
+    ):
+        if path is not None:
+            path.unlink(missing_ok=True)
+    shutil.rmtree(cfg.exports_dir / str(meeting_id), ignore_errors=True)
+    # row + cascades (segments, speaker names, bookmarks, notes, summaries);
+    # action_items keep living as user-owned objects (meeting_id → NULL)
+    db.execute("DELETE FROM meetings WHERE id=? AND owner_id=?", (meeting_id, user.id))
+    return {"ok": True}
 
 
 @router.post("/{meeting_id}/start")

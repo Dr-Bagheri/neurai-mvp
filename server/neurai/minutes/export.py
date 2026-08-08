@@ -110,7 +110,10 @@ async def export_meeting(meeting_id: int, ctx, fmt: str = "docx", template: str 
         path.write_text(build_srt(meeting_id), encoding="utf-8")
         return path
 
-    body, _source = await build_minutes_body(meeting_id, ctx.allow_cloud, template)
+    # D3: cloud needs the caller's consent AND the meeting's own opt-in
+    body, _source = await build_minutes_body(
+        meeting_id, ctx.allow_cloud and bool(meeting["allow_cloud"]), template,
+    )
     header = _header_lines(meeting)
     footer = _signature_lines()
 

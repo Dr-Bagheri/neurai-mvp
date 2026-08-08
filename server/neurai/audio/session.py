@@ -1,9 +1,15 @@
 """Live meeting sessions (Phase 1 core).
 
 One `LiveSession` per live meeting: receives PCM16@16k chunks from the
-browser WebSocket, appends them to the WAV recording (kept for audio-linked
+browser WebSocket, appends them to the recording (kept for audio-linked
 playback), runs the live ASR pass on utterance boundaries, stores live
 segments, and broadcasts captions to subscribed viewers.
+
+Crash-safe recording (D2 invariant): chunks are appended to a raw `.pcm`
+file and fsynced as they arrive — a server crash never loses meeting audio.
+The playable `.wav` (fixed 44-byte header + the same PCM) is finalized on
+stop; `recover_orphaned_recordings()` finalizes any `.pcm` left behind by a
+crash at next startup and queues its quality pass.
 
 `LiveSessionManager` enforces the concurrency cap (§4): starting a second
 meeting while one is live is refused with «جلسه‌ای در حال ضبط است» — a config
@@ -12,7 +18,9 @@ cap, not an architectural limit.
 from __future__ import annotations
 
 import asyncio
-import wave
+import os
+import re
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -38,15 +46,32 @@ class MeetingBusyError(Exception):
     message_fa = "جلسه‌ای در حال ضبط است"
 
 
+def _write_wav_from_pcm(pcm_path: Path, wav_path: Path) -> None:
+    """Wrap a raw PCM16@16k mono file in a WAV container (streamed copy)."""
+    data_size = pcm_path.stat().st_size
+    byte_rate = SAMPLE_RATE * 2
+    header = (
+        b"RIFF" + struct.pack("<I", 36 + data_size) + b"WAVE"
+        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, SAMPLE_RATE, byte_rate, 2, 16)
+        + b"data" + struct.pack("<I", data_size)
+    )
+    with open(wav_path, "wb") as out, open(pcm_path, "rb") as src:
+        out.write(header)
+        while True:
+            block = src.read(1 << 20)
+            if not block:
+                break
+            out.write(block)
+
+
 class LiveSession:
     def __init__(self, meeting_id: int, owner_id: int, wav_path: Path):
         self.meeting_id = meeting_id
         self.owner_id = owner_id
         self.wav_path = wav_path
-        self._wav = wave.open(str(wav_path), "wb")
-        self._wav.setnchannels(1)
-        self._wav.setsampwidth(2)
-        self._wav.setframerate(SAMPLE_RATE)
+        self.pcm_path = wav_path.with_suffix(".pcm")
+        # append mode: a reconnecting session after a dropped WS keeps the audio
+        self._pcm = open(self.pcm_path, "ab")
         self._buffer = bytearray()
         self._written_ms = 0          # audio written to disk so far
         self._buffer_start_ms = 0     # meeting-time offset of buffer[0]
@@ -76,7 +101,11 @@ class LiveSession:
     async def feed(self, chunk: bytes) -> None:
         if self._closed:
             return
-        self._wav.writeframes(chunk)
+        # D2 invariant: audio hits disk as it arrives; fsync so a crash (or
+        # power cut) never loses more than the in-flight chunk.
+        self._pcm.write(chunk)
+        self._pcm.flush()
+        os.fsync(self._pcm.fileno())
         self._written_ms += len(chunk) // _BYTES_PER_MS
         self._buffer.extend(chunk)
         buffer_ms = len(self._buffer) // _BYTES_PER_MS
@@ -119,7 +148,9 @@ class LiveSession:
         if len(self._buffer) // _BYTES_PER_MS >= _MIN_BUFFER_MS:
             await self._transcribe(bytes(self._buffer), self._buffer_start_ms)
         self._buffer.clear()
-        self._wav.close()
+        self._pcm.close()
+        _write_wav_from_pcm(self.pcm_path, self.wav_path)
+        self.pcm_path.unlink(missing_ok=True)
         self._broadcast({"type": "ended"})
 
 
@@ -169,6 +200,36 @@ class LiveSessionManager:
         queue = get_job_queue()
         queue.enqueue("quality_pass", {"meeting_id": meeting_id}, priority=2)
         queue.notify()
+
+
+def recover_orphaned_recordings() -> list[int]:
+    """Startup pass (D2): a crash mid-meeting leaves meeting_N.pcm behind.
+    Finalize it into a playable WAV, mark the meeting for processing, and
+    queue its quality pass — a server crash must never lose a meeting."""
+    from neurai.jobs import get_job_queue
+
+    cfg = get_config()
+    db = get_db()
+    recovered: list[int] = []
+    for pcm_path in sorted(cfg.recordings_dir.glob("meeting_*.pcm")):
+        m = re.match(r"meeting_(\d+)\.pcm$", pcm_path.name)
+        if not m:
+            continue
+        meeting_id = int(m.group(1))
+        wav_path = pcm_path.with_suffix(".wav")
+        if pcm_path.stat().st_size == 0:
+            pcm_path.unlink(missing_ok=True)
+            continue
+        _write_wav_from_pcm(pcm_path, wav_path)
+        pcm_path.unlink(missing_ok=True)
+        db.execute(
+            "UPDATE meetings SET status='processing', audio_path=?, "
+            "ended_at=COALESCE(ended_at, datetime('now')) WHERE id=?",
+            (str(wav_path), meeting_id),
+        )
+        get_job_queue().enqueue("quality_pass", {"meeting_id": meeting_id}, priority=2)
+        recovered.append(meeting_id)
+    return recovered
 
 
 _manager: LiveSessionManager | None = None
