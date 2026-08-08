@@ -2,11 +2,11 @@
 
 **A Persian-first, offline-capable, multi-task AI assistant platform.**
 
-> Status: **v0.2 — core decisions approved after review.** Changes from v0.1 are marked
-> **[REVISED]**. Remaining open items are in §6.
+> Status: **v0.2 — all decisions locked.** Changes from v0.1 are marked **[REVISED]**.
 >
 > Locked decisions: **16 GB / no-GPU baseline · shared office server from day one ·
-> live transcription from day one · Windows-only MVP.**
+> live transcription from day one (1 meeting at a time) · both mic capture modes ·
+> Windows-only MVP · Apache-2.0.**
 
 ---
 
@@ -231,8 +231,8 @@ Request → Policy check:
 - **Windows-only MVP:** the server ships as a Windows service installer (engine + models
   directory + cert setup). Linux server support is a natural follow-up and cheap for a
   normal Python deployment.
-- License: **TBD — Apache-2.0 recommended** (MIT-equivalent in practice, plus an explicit
-  patent grant).
+- License: **Apache-2.0** (decided) — MIT-equivalent in practice, plus an explicit patent
+  grant. See `LICENSE`.
 
 ---
 
@@ -267,13 +267,14 @@ a GPU or bigger box raises it later without code changes.
 
 ---
 
-## 6. Remaining open questions
+## 6. Decision log (all questions resolved)
 
-1. **Server OS reality check:** is the office server actually Windows, or would a Docker/
-   Linux deployment be acceptable? (Windows service confirmed for MVP; Docker is cheap to
-   add and eases Linux later.)
-2. **License:** Apache-2.0 vs MIT — Apache-2.0 recommended, needs a final call.
-
-**Resolved since v0.2:** concurrency target = 1 live meeting at a time (§4); mic strategy =
-both capture modes, selectable per meeting, with speaker identification via enrollment
-round / voice profiles / manual relabel (§3 D2).
+- **Hardware baseline:** 16 GB RAM, no GPU (§4).
+- **Deployment:** shared office server from day one; browser clients on the LAN (D1).
+- **Live transcription:** yes, from day one — two-pass design (D2).
+- **Concurrency:** 1 live meeting at a time; config cap, not an architectural limit (§4).
+- **Mic strategy:** both capture modes, selectable per meeting; room mode gets speaker ID
+  via enrollment round / voice profiles / manual relabel (D2).
+- **Server OS:** Windows for now — ships as a Windows service. Docker/Linux is a natural
+  later addition, not MVP scope.
+- **License:** Apache-2.0.
