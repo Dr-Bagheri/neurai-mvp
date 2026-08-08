@@ -135,6 +135,26 @@ QUALITY PASS (starts when the meeting ends, queued):
   Hugging Face (per-user terms acceptance) — a problem for air-gapped redistribution.
   Benchmark **3D-Speaker** (Apache-2.0) as the default candidate; use pyannote only if
   redistribution is cleared.
+**Capture modes — both supported, selectable per meeting:**
+
+1. **Per-participant capture (distributed):** each participant joins the meeting page from
+   their own laptop/phone browser; every mic stream arrives tagged with the logged-in user.
+   **Speaker labels are free and exact** — no diarization needed; the server mixes streams
+   for the recording. Best for hybrid/remote meetings.
+2. **Room-mic capture (single device):** one device in the room captures everyone; the
+   quality pass runs diarization ("Speaker 1/2/3") and then **speaker identification** maps
+   anonymous speakers to names, via three complementary mechanisms:
+   - **Enrollment round:** the meeting can open with a short introduction round («سلام، من
+     … هستم») — the engine cuts a voice sample per person and matches the rest of the
+     meeting against those fingerprints (speaker embeddings, e.g. ECAPA/3D-Speaker).
+   - **Persistent voice profiles (opt-in):** a user can save a ~30-second voice profile on
+     their account; recurring participants are then recognized automatically in any room
+     meeting, no intro round needed. Profiles are embeddings stored locally on the server,
+     deletable by the user.
+   - **Manual relabel (always available):** in the transcript view, click any segment →
+     assign a name → it propagates to that speaker's segments. This is the safety net when
+     identification is wrong or a guest never enrolled.
+
 - Persian model bake-off in week 0: [vhdm/whisper-large-fa-v1](https://huggingface.co/vhdm/whisper-large-fa-v1),
   `whisper-large-v3-turbo`, Qwen3-ASR — **benchmarked on real meeting recordings**
   (far-field mics, overlapping speech, fa/en code-switching), not clean benchmark audio.
@@ -218,19 +238,19 @@ Request → Policy check:
 
 ## 4. Capacity planning (16 GB, no-GPU baseline)
 
-The honest math for the baseline server, all figures to be validated in week 0:
+**Target: 1 live meeting at a time** (decided). This makes the baseline comfortable:
 
 | Load | Feasible on baseline? |
 |---|---|
-| 1 live meeting (small-model live pass) | ✅ comfortable |
-| 2 simultaneous live meetings | ⚠️ likely OK; validate in week 0 |
-| 3+ simultaneous live meetings | ❌ needs GPU or bigger box |
-| Quality pass (large model) | ✅ queued after meetings, ~faster than realtime on modern CPU |
+| 1 live meeting (small-model live pass) | ✅ comfortable — the design target |
+| Quality pass (large model) | ✅ queued after the meeting, ~faster than realtime on modern CPU |
 | Local LLM summary during a live meeting | ⚠️ RAM/CPU contention — summaries queue behind live ASR by design |
 
-Rules encoded in the engine: live meetings get priority; quality passes and LLM jobs run
-from a queue; the admin dashboard shows the queue. **Deployments expecting 3+ concurrent
-meetings need a GPU** — any consumer NVIDIA card moves every row above to ✅.
+Rules encoded in the engine: the live meeting gets priority; quality passes and LLM jobs
+run from a queue; the admin dashboard shows the queue. If a second meeting is started while
+one is live, the engine refuses with a clear message («جلسه‌ای در حال ضبط است») rather than
+degrading both. Multi-meeting concurrency is a config cap, not an architectural limit —
+a GPU or bigger box raises it later without code changes.
 
 ---
 
@@ -238,9 +258,9 @@ meetings need a GPU** — any consumer NVIDIA card moves every row above to ✅.
 
 | Phase | Deliverable | Definition of done |
 |---|---|---|
-| **0. Benchmarks** (~week 1) | Persian ASR + local-LLM bake-off on *real meeting audio*; diarization license check; 2-concurrent-meeting load test | Chosen default models with measured WER/quality; capacity table validated |
-| **1. Live transcriber on the server** | Server install + browser client: live captions in a meeting room, quality pass with speakers after; auth + per-user meetings | Two users, WiFi router with no internet, full meeting transcribed |
-| **2. Harness + intelligence** | Ollama routing + map-reduce summaries, action items; OpenRouter behind consent gate | Fallback proven by pulling the network cable mid-task |
+| **0. Benchmarks** (~week 1) | Persian ASR + local-LLM bake-off on *real meeting audio*; diarization + speaker-embedding license check; live-meeting load test on the 16 GB baseline | Chosen default models with measured WER/quality; capacity table validated |
+| **1. Live transcriber on the server** | Server install + browser client, **room-mic mode**: live captions, quality pass with diarized speakers + manual relabel; auth + per-user meetings | Two users, WiFi router with no internet, full meeting transcribed and speakers named by hand |
+| **2. Harness + intelligence** | Ollama routing + map-reduce summaries, action items; OpenRouter behind consent gate; **speaker ID** (enrollment round + voice profiles) and **per-participant capture mode** | Fallback proven by pulling the network cable mid-task; a recurring participant auto-named in room mode |
 | **3. Chat + RAG** | Persian chat; Q&A over transcripts & PDFs | Answers cite sources |
 | **4. Backup + polish** | Encrypted snapshot backup (optional), model manager, admin dashboard, Windows service installer | One-command install on a clean Windows machine |
 | **5. Thin clients** | Tauri desktop wrapper (hotkeys, tray recording); single-user laptop preset | Same server codebase, no forks |
@@ -249,12 +269,11 @@ meetings need a GPU** — any consumer NVIDIA card moves every row above to ✅.
 
 ## 6. Remaining open questions
 
-1. **Concurrency target:** how many *simultaneous* meetings must the baseline server
-   handle? (Sets whether we recommend a GPU in the deployment guide from day one.)
-2. **Server OS reality check:** is the office server actually Windows, or would a Docker/
+1. **Server OS reality check:** is the office server actually Windows, or would a Docker/
    Linux deployment be acceptable? (Windows service confirmed for MVP; Docker is cheap to
    add and eases Linux later.)
-3. **License:** Apache-2.0 vs MIT — Apache-2.0 recommended, needs a final call.
-4. **Mic strategy in rooms:** one laptop per meeting room capturing room audio, or each
-   participant's browser capturing their own mic? (Changes diarization difficulty a lot —
-   per-participant capture makes speaker labels nearly free.)
+2. **License:** Apache-2.0 vs MIT — Apache-2.0 recommended, needs a final call.
+
+**Resolved since v0.2:** concurrency target = 1 live meeting at a time (§4); mic strategy =
+both capture modes, selectable per meeting, with speaker identification via enrollment
+round / voice profiles / manual relabel (§3 D2).
