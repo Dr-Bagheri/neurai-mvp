@@ -1,30 +1,35 @@
 # NeurAI
 
 **دستیار هوش مصنوعی فارسی‌محور، چندکاره و آفلاین** — a Persian-first, offline-capable,
-multi-task AI assistant platform.
+multi-task AI assistant platform for teams, deployed on-premise.
 
-- 🎙️ **Meeting transcription** in Persian — fully offline, with speaker labels
+- 🎙️ **Live meeting transcription** in Persian — live captions during the meeting, a
+  full-quality transcript with speaker labels minutes after it ends. Fully offline.
 - 🧠 **Meeting intelligence** — summaries, action items, decisions
 - 💬 **Persian chat assistant** and 📄 **document Q&A (RAG)** over your own files
-- 🏠 **Local-first:** runs air-gapped with local models (faster-whisper, Ollama)
-- ☁️ **Cloud-enhanced:** automatically uses frontier models via OpenRouter (MiniMax M3, …) when online, with graceful fallback to local
-- 🔄 Optional Supabase sync/backup — off by default, never required
+- 🏠 **Local-first:** one server on your office network, used from any browser on the LAN;
+  runs air-gapped with local models (faster-whisper, Ollama)
+- ☁️ **Cloud-enhanced (opt-in):** frontier models via OpenRouter when online and explicitly
+  enabled, with automatic fallback to local
+- 🔄 Optional encrypted snapshot backup — off by default, never required
 
 ## Status
 
-🚧 **Design phase.** The full proposed architecture is in [ARCHITECTURE.md](ARCHITECTURE.md)
-and is currently under discussion. No code yet — decisions first.
+🚧 **Design locked (v0.2), build starting.** The architecture is in
+[ARCHITECTURE.md](ARCHITECTURE.md). Key decisions: on-premise server + browser clients,
+two-pass live transcription, 16 GB no-GPU baseline, Windows-first.
 
-## Planned stack
+## Stack
 
 | Layer | Technology |
 |---|---|
-| Desktop shell | Tauri 2 + React + TypeScript (RTL-first UI) |
-| AI engine | Python (FastAPI sidecar): faster-whisper, diarization, RAG |
-| Local LLMs | Ollama (Qwen3 / Gemma / Aya) |
-| Cloud LLMs | OpenRouter (MiniMax M3 default) |
-| Storage | SQLite + sqlite-vec (local) · Supabase (optional sync) |
+| Server | Python FastAPI as a Windows service — ASR, harness, RAG, auth |
+| Clients | Browser (React + TypeScript, RTL-first) · Tauri thin client later |
+| Speech | faster-whisper two-pass (live small model → quality Persian large-v3) + local diarization |
+| Local LLMs | Ollama (Qwen3 / Gemma / Aya, ~8B q4 on baseline) |
+| Cloud LLMs | OpenRouter (opt-in, consent-gated) |
+| Storage | SQLite + sqlite-vec on the server · optional encrypted Supabase backup |
 
 ## License
 
-TBD (MIT proposed).
+TBD (Apache-2.0 proposed).
