@@ -21,3 +21,4 @@ Thumbs.db
 .playwright-mcp/
 *.egg-info/
 *.tsbuildinfo
+server/build/
