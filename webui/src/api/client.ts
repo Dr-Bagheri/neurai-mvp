@@ -1,156 +1,231 @@
-// The single place the UI gets data from. Today it serves the in-browser
-// mock; when the FastAPI engine exists, each function body becomes a fetch
-// to /api/* (types stay identical — they mirror the Pydantic schema).
+// Real API client for the FastAPI engine (D1/D6). Session-cookie auth,
+// same-origin in production (the server serves this bundle); the Vite dev
+// server proxies /api and /ws to 127.0.0.1:8471.
 
-import {
-  CANNED_ANSWERS,
-  FALLBACK_ANSWER,
-  MOCK_ACTION_ITEMS,
-  MOCK_AUDIT,
-  MOCK_CHAT_SEED,
-  MOCK_DISK,
-  MOCK_DOCUMENTS,
-  MOCK_ERRORS,
-  MOCK_MEETINGS,
-  MOCK_MODELS,
-  MOCK_QUEUE,
-  MOCK_RETENTION,
-  MOCK_SEARCH,
-  MOCK_STATUS,
-  MOCK_USER,
-} from "./mock";
 import type {
   ActionItem,
-  ActionItemStatus,
-  AuditEntry,
-  ChatMessage,
-  DiskHealth,
+  AdminMeetingRow,
+  AdminSettings,
+  AdminStatus,
+  AdminUserRow,
+  AuditFileRecord,
+  AuditRow,
+  AuditVerifyResult,
+  AuthStatus,
+  Bookmark,
+  ChatInfo,
+  CloudReadiness,
+  CloudStatus,
   DocumentInfo,
-  ErrorLogEntry,
+  JobRow,
   Meeting,
-  ModelStatus,
-  QueueJob,
-  RetentionSettings,
+  MeetingCreate,
+  MeetingMic,
+  MeetingNote,
+  MeetingProgress,
+  ModeStatus,
+  ServerMode,
   SearchHit,
-  ServerStatus,
+  SendMessageResult,
+  Series,
+  SettingsUpdate,
+  StoredChatMessage,
+  Summary,
+  TranscriptSegment,
   User,
 } from "./types";
 
-const LATENCY_MS = 250;
-const delay = <T,>(value: T): Promise<T> =>
-  new Promise((resolve) => setTimeout(() => resolve(value), LATENCY_MS));
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    /** FastAPI `detail` — the server sends user-facing Persian messages. */
+    public detail: string,
+  ) {
+    super(detail);
+  }
+}
 
-// Mutable copies so UI actions (relabel, status changes) persist in-session.
-const meetings: Meeting[] = structuredClone(MOCK_MEETINGS);
-const actionItems: ActionItem[] = structuredClone(MOCK_ACTION_ITEMS);
-let status: ServerStatus = structuredClone(MOCK_STATUS);
-let retention: RetentionSettings = structuredClone(MOCK_RETENTION);
-let msgCounter = 100;
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    credentials: "same-origin",
+    headers:
+      init?.body !== undefined && !(init.body instanceof FormData)
+        ? { "Content-Type": "application/json" }
+        : undefined,
+    ...init,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const data = await res.json();
+      if (typeof data?.detail === "string") detail = data.detail;
+    } catch {
+      // non-JSON error body
+    }
+    throw new ApiError(res.status, detail);
+  }
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+const get = <T,>(path: string) => request<T>(path);
+const post = <T,>(path: string, body?: unknown) =>
+  request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
 export const api = {
-  async login(username: string, _password: string): Promise<User> {
-    return delay({ ...MOCK_USER, username });
-  },
+  // ---- auth (auth.py) ----
+  authStatus: () => get<AuthStatus>("/api/auth/status"),
+  setup: (username: string, password: string, display_name = "") =>
+    post<User>("/api/auth/setup", { username, password, display_name }),
+  login: (username: string, password: string) =>
+    post<User>("/api/auth/login", { username, password }),
+  logout: () => post<{ ok: boolean }>("/api/auth/logout"),
+  me: () => get<User>("/api/auth/me"),
+  changePassword: (current_password: string, new_password: string) =>
+    post<{ ok: boolean }>("/api/auth/change-password", { current_password, new_password }),
+  createUser: (username: string, password: string, display_name = "") =>
+    post<User>("/api/auth/users", { username, password, display_name }),
 
-  async getStatus(): Promise<ServerStatus> {
-    return delay(structuredClone(status));
-  },
+  // ---- meetings (meetings.py) ----
+  listMeetings: () => get<Meeting[]>("/api/meetings"),
+  createMeeting: (body: MeetingCreate) => post<Meeting>("/api/meetings", body),
+  getMeeting: (id: number) => get<Meeting>(`/api/meetings/${id}`),
+  deleteMeeting: (id: number) =>
+    request<{ ok: boolean }>(`/api/meetings/${id}`, { method: "DELETE" }),
+  startMeeting: (id: number) => post<{ ok: boolean; status: string }>(`/api/meetings/${id}/start`),
+  stopMeeting: (id: number) => post<{ ok: boolean; status: string }>(`/api/meetings/${id}/stop`),
+  getTranscript: (id: number) => get<TranscriptSegment[]>(`/api/meetings/${id}/transcript`),
+  relabelSpeaker: (id: number, label: string, display_name: string) =>
+    post<{ ok: boolean }>(`/api/meetings/${id}/speakers/relabel`, { label, display_name }),
+  /** For the <audio> element — Range-seekable WAV synthesized by the server.
+   * mic_id selects a specific mic's recording (omit → first mic). */
+  audioUrl: (id: number, micId?: number) =>
+    micId !== undefined
+      ? `/api/meetings/${id}/audio?mic_id=${micId}`
+      : `/api/meetings/${id}/audio`,
+  // Named multi-mic registry (D2 v0.3).
+  listMics: (id: number) => get<MeetingMic[]>(`/api/meetings/${id}/mics`),
+  addMic: (id: number, name: string) =>
+    post<MeetingMic>(`/api/meetings/${id}/mics`, { name }),
+  /** Rename works before AND during the meeting. */
+  renameMic: (id: number, micId: number, name: string) =>
+    request<{ ok: boolean }>(`/api/meetings/${id}/mics/${micId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  /** 409 once the mic has recorded audio. */
+  deleteMic: (id: number, micId: number) =>
+    request<{ ok: boolean }>(`/api/meetings/${id}/mics/${micId}`, { method: "DELETE" }),
+  /** D15 per-meeting cloud-ASR consent; only before start; 409 offline/«محرمانه». */
+  setCloudTranscribe: (id: number, enabled: boolean) =>
+    request<{ ok: boolean }>(`/api/meetings/${id}/cloud-transcribe`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    }),
+  /** Quality-pass percent while status=="processing" (done → 100). */
+  meetingProgress: (id: number) =>
+    get<MeetingProgress>(`/api/meetings/${id}/progress`),
+  addBookmark: (id: number, t_ms: number, note = "") =>
+    post<{ id: number }>(`/api/meetings/${id}/bookmarks`, { t_ms, note }),
+  listBookmarks: (id: number) => get<Bookmark[]>(`/api/meetings/${id}/bookmarks`),
+  addNote: (id: number, text: string, t_ms: number | null = null) =>
+    post<{ id: number }>(`/api/meetings/${id}/notes`, { text, t_ms }),
+  listNotes: (id: number) => get<MeetingNote[]>(`/api/meetings/${id}/notes`),
+  listSummaries: (id: number) => get<Summary[]>(`/api/meetings/${id}/summaries`),
+  exportUrl: (id: number, filename: string) =>
+    `/api/meetings/${id}/exports/${encodeURIComponent(filename)}`,
 
-  async setProfile(profile: ServerStatus["profile"]): Promise<ServerStatus> {
-    status = { ...status, profile };
-    return delay(structuredClone(status));
-  },
+  // ---- series ----
+  listSeries: () => get<Series[]>("/api/series"),
+  createSeries: (title: string) => post<{ id: number; title: string }>("/api/series", { title }),
 
-  async setWorkspaceCloud(enabled: boolean): Promise<ServerStatus> {
-    status = { ...status, cloud_enabled_workspace: enabled };
-    return delay(structuredClone(status));
-  },
+  // ---- chat (chat.py) ----
+  listChats: () => get<ChatInfo[]>("/api/chats"),
+  createChat: (title = "") => post<{ id: number; title: string }>("/api/chats", { title }),
+  listChatMessages: (chatId: number) =>
+    get<StoredChatMessage[]>(`/api/chats/${chatId}/messages`),
+  sendChatMessage: (
+    chatId: number,
+    content: string,
+    allow_cloud = false,
+    signal?: AbortSignal,
+  ) =>
+    request<SendMessageResult>(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content, allow_cloud }),
+      signal,
+    }),
+  /** Stop button: aborts the in-flight LLM generation server-side. */
+  cancelGeneration: (chatId: number) =>
+    post<{ cancelled: boolean }>(`/api/chats/${chatId}/cancel`),
+  confirmSkill: (
+    chatId: number,
+    skill: string,
+    params: Record<string, unknown>,
+    allow_cloud = false,
+  ) => post<SendMessageResult>(`/api/chats/${chatId}/confirm`, { skill, params, allow_cloud }),
 
-  async listMeetings(): Promise<Meeting[]> {
-    return delay(structuredClone(meetings));
-  },
+  // ---- action items (action_items.py) ----
+  listActionItems: (status?: string) =>
+    get<ActionItem[]>(`/api/action-items${status ? `?status=${status}` : ""}`),
+  updateActionItem: (
+    id: number,
+    patch: Partial<Pick<ActionItem, "text" | "assignee" | "due_date" | "status">>,
+  ) => request<{ ok: boolean }>(`/api/action-items/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  }),
+  resurface: (seriesId: number) => get<ActionItem[]>(`/api/action-items/resurface/${seriesId}`),
 
-  async getMeeting(id: string): Promise<Meeting | null> {
-    const m = meetings.find((x) => x.id === id) ?? null;
-    return delay(m ? structuredClone(m) : null);
+  // ---- documents (documents.py) ----
+  listDocuments: () => get<DocumentInfo[]>("/api/documents"),
+  uploadDocument: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ id: number; filename: string; status: string }>("/api/documents", {
+      method: "POST",
+      body: form,
+    });
   },
+  deleteDocument: (id: number) =>
+    request<{ ok: boolean }>(`/api/documents/${id}`, { method: "DELETE" }),
 
-  /** Manual relabel (D2): rename a speaker across all their segments. */
-  async relabelSpeaker(meetingId: string, from: string, to: string): Promise<Meeting | null> {
-    const m = meetings.find((x) => x.id === meetingId);
-    if (!m) return delay(null);
-    for (const s of m.segments) {
-      if (s.speaker === from) s.speaker = to;
-    }
-    if (!m.participants.includes(to)) m.participants.push(to);
-    return delay(structuredClone(m));
-  },
+  // ---- search (search.py) ----
+  search: (query: string, kind?: "transcript" | "document", top_k = 8) =>
+    post<SearchHit[]>("/api/search", { query, kind: kind ?? null, top_k }),
 
-  async saveNotes(meetingId: string, notes: string): Promise<void> {
-    const m = meetings.find((x) => x.id === meetingId);
-    if (m) m.notes = notes;
-    return delay(undefined);
-  },
+  // ---- admin (admin.py) ----
+  adminSettings: () => get<AdminSettings>("/api/admin/settings"),
+  updateAdminSettings: (patch: SettingsUpdate) =>
+    request<AdminSettings>("/api/admin/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  adminStatus: () => get<AdminStatus>("/api/admin/status"),
+  adminJobs: () => get<JobRow[]>("/api/admin/jobs"),
+  adminAudit: () => get<AuditRow[]>("/api/admin/audit"),
+  adminUsers: () => get<AdminUserRow[]>("/api/admin/users"),
+  /** Booleans only — drives enabled/disabled state of the cloud buttons. */
+  cloudStatus: () => get<CloudStatus>("/api/admin/cloud-status"),
+  /** D15: the one Offline/Online switch. PUT is probe-gated (409 Persian). */
+  getMode: () => get<ModeStatus>("/api/admin/mode"),
+  setMode: (mode: ServerMode) =>
+    request<ModeStatus>("/api/admin/mode", { method: "PUT", body: JSON.stringify({ mode }) }),
+  /** Manual encrypted snapshot backup to Supabase (queued job). */
+  backupNow: () => post<{ job_id: number }>("/api/admin/backup"),
+  adminAllMeetings: () => get<AdminMeetingRow[]>("/api/admin/meetings"),
+  adminRemoveMeeting: (id: number) =>
+    request<{ ok: boolean }>(`/api/admin/meetings/${id}`, { method: "DELETE" }),
+  adminAuditFile: () => get<AuditFileRecord[]>("/api/admin/audit-file"),
+  adminAuditVerify: () => get<AuditVerifyResult>("/api/admin/audit-file/verify"),
 
-  async listActionItems(): Promise<ActionItem[]> {
-    return delay(structuredClone(actionItems));
-  },
+  // ---- system (any authenticated user) ----
+  /** Cloud readiness + reason enum — drives non-admin cloud toggles. */
+  cloudReadiness: () => get<CloudReadiness>("/api/cloud"),
 
-  async setActionItemStatus(id: string, newStatus: ActionItemStatus): Promise<ActionItem[]> {
-    const a = actionItems.find((x) => x.id === id);
-    if (a) a.status = newStatus;
-    return delay(structuredClone(actionItems));
-  },
-
-  async listDocuments(): Promise<DocumentInfo[]> {
-    return delay(structuredClone(MOCK_DOCUMENTS));
-  },
-
-  async searchTranscripts(query: string): Promise<SearchHit[]> {
-    return delay(MOCK_SEARCH(query));
-  },
-
-  async listQueue(): Promise<QueueJob[]> {
-    return delay(structuredClone(MOCK_QUEUE));
-  },
-
-  async listAudit(): Promise<AuditEntry[]> {
-    return delay(structuredClone(MOCK_AUDIT));
-  },
-
-  // ---- D9 admin health page ----
-
-  async getDiskHealth(): Promise<DiskHealth> {
-    return delay(structuredClone(MOCK_DISK));
-  },
-
-  async listModels(): Promise<ModelStatus[]> {
-    return delay(structuredClone(MOCK_MODELS));
-  },
-
-  async listErrors(): Promise<ErrorLogEntry[]> {
-    return delay(structuredClone(MOCK_ERRORS));
-  },
-
-  async getRetention(): Promise<RetentionSettings> {
-    return delay(structuredClone(retention));
-  },
-
-  async setRetention(next: RetentionSettings): Promise<RetentionSettings> {
-    retention = { ...next };
-    return delay(structuredClone(retention));
-  },
-
-  chatSeed(): ChatMessage[] {
-    return structuredClone(MOCK_CHAT_SEED);
-  },
-
-  /** Mock of the harness tool-use loop: intent-matched canned skills. */
-  async sendChat(text: string): Promise<ChatMessage> {
-    const canned = CANNED_ANSWERS.find((c) => c.match.test(text));
-    const body = canned ? canned.build() : FALLBACK_ANSWER();
-    const reply: ChatMessage = { id: `c${++msgCounter}`, role: "assistant", ...body };
-    // Simulate model latency a bit above data-call latency.
-    return new Promise((resolve) => setTimeout(() => resolve(reply), 900));
-  },
+  // ---- health ----
+  health: () => get<{ ok: boolean; version: string }>("/api/health"),
 };
+
+/** WebSocket URL helper (same host; ws/wss follows the page scheme). */
+export function wsUrl(path: string): string {
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}${path}`;
+}

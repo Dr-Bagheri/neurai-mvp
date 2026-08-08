@@ -2,11 +2,11 @@
 
 **A Persian-first, offline-capable, multi-task AI assistant platform.**
 
-> Status: **v0.2 — all decisions locked (D1–D11), server engine + webui built against
+> Status: **v0.2 — all decisions locked (D1–D15), server engine + webui built against
 > them.** Changes from v0.1 are marked **[REVISED]**.
 >
-> Locked decisions: **16 GB / no-GPU baseline · shared office server from day one ·
-> live transcription from day one (1 meeting at a time) · both mic capture modes ·
+> Locked decisions: **16 GB RAM / 8-core / 4 GB GPU baseline [REVISED v0.3] · shared office server from day one ·
+> live recording + single GPU quality pass with progress [REVISED v0.3] (1 meeting at a time) · named multi-mic capture ·
 > Windows-first full installer + Linux via Docker (D10) · sealed encrypted audio (D11) ·
 > Apache-2.0.**
 
@@ -23,7 +23,7 @@ English is secondary.
 
 | Module | Description | Works offline? |
 |---|---|---|
-| **Live meeting transcription** | Live Persian speech-to-text with on-screen captions; full-quality transcript with speaker labels minutes after the meeting ends | ✅ Yes (core requirement) |
+| **Meeting transcription** | Live crash-safe recording; full-quality Persian transcript with speaker labels minutes after the meeting ends (GPU pass with progress bar — D2 v0.3) | ✅ Yes (core requirement) |
 | **Meeting intelligence** | Summary, action items, decisions — generated from the transcript | ✅ local LLM / ☁️ better with cloud |
 | **Chat assistant** | General Persian chat, Q&A, writing help | ✅ / ☁️ |
 | **Document Q&A (RAG)** | Ask questions over your own PDFs/docs, in Persian | ✅ Yes |
@@ -66,13 +66,12 @@ flowchart TB
             TM["Task Modules<br/>(transcription, chat, RAG, …)"]
             SK["Skill Runtime<br/>tool registry + ACL enforcement<br/>+ confirmation gate + audit log"]
             H["Model Harness<br/>(router + fallback + chunking<br/>+ tool-use loop)"]
-            AP["Audio Pipeline<br/>VAD → live ASR → post-pass ASR<br/>→ diarization → fa post-processing"]
+            AP["Audio Pipeline<br/>recording → GPU quality ASR (progress)<br/>→ diarization → fa post-processing"]
             DL["Data Layer<br/>SQLite + sqlite-vec, per-user scoping"]
         end
         subgraph Local["Local models (offline)"]
-            WL["faster-whisper — small/turbo<br/>(live pass)"]
-            WQ["faster-whisper — large fa fine-tune<br/>(quality pass)"]
-            OL["Ollama<br/>Qwen3 / Gemma / Aya (~8B q4)"]
+            WQ["faster-whisper large-v3 int8 GPU<br/>(quality pass, D14)"]
+            OL["Ollama<br/>qwen3.5:4b (D14)"]
             EMB["Embeddings<br/>BGE-M3 (multilingual)"]
         end
     end
@@ -91,7 +90,6 @@ flowchart TB
     TM --> SK
     SK --> H
     SK --> DL
-    AP --> WL
     AP --> WQ
     H --> OL
     H --> EMB
@@ -121,10 +119,10 @@ flowchart TB
         APIo["FastAPI — auth, jobs, UI"]
         SKo["Skill Runtime"]
         Ho["Model Harness → local only"]
-        APo["Audio Pipeline (two-pass ASR + diarization)"]
+        APo["Audio Pipeline (GPU quality ASR + diarization)"]
         DLo["SQLite + sqlite-vec"]
-        OLo["Ollama ~8B q4"]
-        Wo["faster-whisper (live + quality)"]
+        OLo["Ollama qwen3.5:4b"]
+        Wo["faster-whisper large-v3 int8"]
         Eo["BGE-M3 embeddings"]
     end
     Browsers["LAN browsers"] --> APIo
@@ -156,7 +154,7 @@ flowchart TB
 
 | Feature | 🔌 Offline | 🌐 Online |
 |---|---|---|
-| Live transcription + quality pass | ✅ identical | ✅ identical (never uses cloud — audio stays on-prem, always) |
+| Transcription quality pass | ✅ local GPU | ✅ local by default; ☁️ cloud ASR only with explicit per-meeting consent (D15) |
 | Speaker ID / diarization | ✅ identical | ✅ identical (always local) |
 | Meeting summaries, action items | ✅ local ~8B model, map-reduce | ✅ same, or ☁️ frontier model if workspace consented |
 | Chat assistant + skills | ✅ local model + intent router | ✅ same, or ☁️ driver model + full agent loop |
@@ -177,9 +175,13 @@ flowchart TB
    out falls back to the local model and the response is re-tagged 🏠 — proven in Phase 2's
    "pull the network cable mid-task" test. Going back online never changes stored data;
    it only re-enables upgrades and flushes the backup queue.
-3. **Audio never goes to the cloud in any mode.** ASR and diarization are local-only by
-   architecture — cloud is for *text* tasks under consent, which keeps both the privacy
-   story and the offline guarantee simple.
+3. **[REVISED v0.3-online, user decision]** ~~Audio never goes to the cloud in any
+   mode~~ → **Audio stays local by default; in ONLINE mode a meeting may opt in to
+   cloud transcription with an explicit per-meeting consent** (D15). Hard limits that
+   remain non-negotiable: offline/air-gapped modes never touch the network with audio
+   or anything else; the default for every meeting is local ASR; consent is per-meeting
+   and explicit (never a global silent default); diarization stays local. The on-prem
+   privacy positioning (§1.1) survives as the default posture, not as an absolute.
 4. **CI runs the offline profile as first-class:** the Persian eval set executes with
    network access blocked, so an accidental hard cloud dependency fails the build.
 
@@ -210,27 +212,30 @@ flowchart TB
 inside a desktop installer (PyInstaller + torch + antivirus false positives). A server
 install is a normal Python deployment; no embedding.
 
-### D2 — **[REVISED]** Speech pipeline: two-pass live transcription
+### D2 — **[REVISED v0.3]** Speech pipeline: single GPU quality pass with progress
 
-Live from day one, on a CPU-only 16 GB box, is only feasible with a **two-pass design**:
+~~Two-pass (live captions + quality)~~ **[REVISED v0.3, user decision]: the live caption
+pass is removed** — small-model live output wasn't good enough to show. Recording is
+still live and crash-safe (unchanged); transcription is one quality pass that starts the
+moment the meeting ends, with **percent progress surfaced in the UI**:
 
 ```
-LIVE PASS (during the meeting, per active meeting):
-  browser mic → WebSocket → VAD (Silero) → faster-whisper SMALL/turbo model (int8, CPU)
-  → rough live captions, ~2–5 s latency, no speakers
+DURING the meeting:
+  browser mic(s) → WebSocket → encrypted crash-safe recording (D11)  — no ASR
 
-QUALITY PASS (starts when the meeting ends, queued):
-  full recording → faster-whisper Persian fine-tuned large-v3 (int8)
-  → speaker diarization (fully local)
-  → Persian post-processing (normalization, ZWNJ, punctuation restore)
-  → final transcript with timestamps + speakers replaces the live one
+QUALITY PASS (auto-queued at meeting end, GPU-first — D13):
+  full recording → faster-whisper large-v3 int8 (~2.5 GB VRAM)
+  → progress events (segment end-time / total duration → % bar in the meeting page)
+  → speaker diarization (pyannote 3.1, sequenced after ASR — both fit 4 GB in turn)
+  → Persian post-processing (fa_normalize, ZWNJ, punctuation)
+  → final transcript with timestamps + speakers
 ```
 
-- Users see captions in real time; the **authoritative transcript with speaker labels
-  arrives minutes after the meeting ends**. Live diarization is explicitly out of scope —
-  it is genuinely hard even with a GPU, and the post-pass gives better labels anyway.
-- **faster-whisper** (CTranslate2, int8) for both passes — no torch dependency for ASR,
-  CPU-first, uses GPU automatically if the server has one.
+- Rationale (2026 research, PSRB benchmark): faster-whisper large-v3 is the strongest
+  open-source Persian pipeline; nothing at ≤4 GB VRAM beats the Whisper-large family.
+  The Persian fine-tuned turbo (`vhdm/whisper-large-fa-v1`, MIT, ~3× faster) enters a
+  bake-off on real meeting audio and is promoted to default if it wins (D14).
+- **faster-whisper** (CTranslate2, int8) — no torch dependency for ASR.
 - **Diarization licensing check is a week-0 task:** pyannote's models are gated on
   Hugging Face (per-user terms acceptance) — a problem for air-gapped redistribution.
   Benchmark **3D-Speaker** (Apache-2.0) as the default candidate; use pyannote only if
@@ -240,7 +245,10 @@ QUALITY PASS (starts when the meeting ends, queued):
 1. **Per-participant capture (distributed):** each participant joins the meeting page from
    their own laptop/phone browser; every mic stream arrives tagged with the logged-in user.
    **Speaker labels are free and exact** — no diarization needed; the server mixes streams
-   for the recording. Best for hybrid/remote meetings.
+   for the recording. Best for hybrid/remote meetings. **[v0.3]** A meeting can register
+   **multiple microphones, each added explicitly and tagged with a user-chosen name**
+   («میکروفون میز جلسه», «لپ‌تاپ سارا») — the tag flows through to speaker labels in the
+   transcript.
 2. **Room-mic capture (single device):** one device in the room captures everyone; the
    quality pass runs diarization ("Speaker 1/2/3") and then **speaker identification** maps
    anonymous speakers to names, via three complementary mechanisms:
@@ -534,15 +542,81 @@ was pulled into Phase 1.
   nonces and ciphertexts across files, CSPRNG sourcing, and disjoint keystream on
   append-resume. Any change to the audio path must keep this test green and unweakened.
 
+### D12 — **[NEW]** Tamper-evident admin audit file (hash-chained JSONL)
+
+Alongside the queryable DB audit table (D7 rule 5), the server appends security-relevant
+admin events — above all **destructive ones** (meeting/archive removal, user management,
+key/profile changes) — to a hash-chained JSONL file in the data directory: each record
+carries the SHA-256 of the previous record (random genesis anchor), so any edit,
+deletion, or reorder of a line breaks the chain and is detectable by a verify routine
+exposed to admins only.
+
+- **Access:** written by the engine only; readable through the admin API (admin role);
+  no API can modify or truncate it. Rotation continues the chain (new file anchors to
+  the last hash of the previous one).
+- **Scope of the guarantee:** tamper-*evidence* against in-app or DB-level manipulation
+  and accidental edits. Consistent with D8/D11, an attacker with full write access to
+  the data directory can rewrite the whole chain — out of MVP scope.
+- **Rule:** any new destructive admin capability MUST log to this chain in the same
+  commit that introduces it.
+
+### D13 — **[REVISED v0.3]** Compute: GPU-first, one mode, no user choice
+
+~~cpu/cuda/auto admin dropdown~~ **[REVISED v0.3, user decision]: there is exactly one
+compute behavior and no setting.** The platform targets the GPU (new baseline: 4 GB
+NVIDIA — see §4): ASR loads on CUDA with a forced-initialization probe at engine build,
+and **falls back to CPU silently on any load failure — logged, never fatal, never a
+question the user answers**. Ollama manages its own GPU offload natively. A missing
+CUDA runtime degrades speed, not function; the installer carries the CUDA-runtime step.
+
+### D14 — **[NEW v0.3]** Model lineup (researched 2026, user-approved)
+
+| Role | Model | Why |
+|---|---|---|
+| ASR (quality pass) | **faster-whisper `large-v3` int8, GPU** (~2.5 GB VRAM) | best independently-benchmarked open Persian pipeline (PSRB) |
+| ASR challenger | `vhdm/whisper-large-fa-v1` (Persian turbo fine-tune, MIT, CT2-converted) | ~3× faster, 14% self-reported WER — **bake-off on real meeting audio, promote if it wins** |
+| Diarization | pyannote `speaker-diarization-3.1`, **pinned `pyannote.audio <4`** (4.x has a >9 GB VRAM regression) | MIT, ~2.6 GB VRAM, sequenced after ASR |
+| Assistant LLM | **`qwen3.5:4b`** via Ollama, `think: false` | strongest Persian per GB (201-lang), native tool calling, Apache-2.0, ~2–4× faster than the old `qwen3:8b` on 4 GB |
+| LLM floor | `qwen3.5:2b` | guaranteed full GPU fit if 4b spills |
+| Embeddings | `bge-m3` (unchanged) | tops Persian FaMTEB for our retrieval/rerank tasks |
+
+Ruled out with reasons recorded (steward research, 2026-08-08): Phi-4-mini (no Persian),
+Aya-Expanse (non-commercial license + VRAM), DeepSeek distills (thinking latency),
+Gemma 4 e2b (speed king but ~2B capability ceiling — kept as a benchmark candidate),
+7B+ models (spill 4 GB VRAM → hybrid-offload slowness this revision exists to eliminate).
+
+### D15 — **[NEW v0.3]** Online mode: admin switch + per-task cloud routing + consent-gated cloud ASR
+
+One admin-facing **Offline / Online** switch in server management (replaces raw
+profile/cloud toggles in the UI):
+
+- **Default: Offline.** Online is selectable only when internet is actually reachable
+  (probe-gated); on a disconnected server the Online button renders disabled. Under the
+  air-gapped profile the Online button stays visible but permanently disabled
+  («حالت ایزوله») — per the user's standing visible-but-disabled rule for cloud UI.
+- **Online = per-task frontier routing** through the harness (all via OpenRouter,
+  admin-overridable settings): `cloud_chat_model` (default **anthropic/claude-sonnet-5**)
+  drives chat/skills/translation; `cloud_heavy_model` (default **anthropic/claude-opus-5**)
+  drives summaries/action items/صورتجلسه minutes. Retrieval/embeddings stay local always.
+- **Cloud ASR (audio leaves the server — invariant amendment §2.1-3):** an
+  OpenAI-compatible `/audio/transcriptions` provider (secrets `cloud_asr_url` /
+  `cloud_asr_key`, model `cloud_asr_model`; default Groq `whisper-large-v3-turbo` —
+  fastest current hosted Whisper; provider swappable to OpenAI etc.). Used ONLY when
+  the server is in Online mode AND the meeting has an explicit per-meeting
+  «رونویسی ابری» opt-in; every use is D12-chained. Local GPU ASR remains the default
+  and the automatic fallback (cloud ASR failure → local pass, never a lost transcript).
+  **Steward ruling (2026-08-08): «محرمانه» meetings refuse cloud transcription even
+  with consent — D4 sensitivity levels are absolute and beat D15 convenience paths.**
+
 ---
 
-## 4. Capacity planning (16 GB, no-GPU baseline)
+## 4. Capacity planning (16 GB RAM, 8-core, 4 GB GPU baseline — [REVISED v0.3])
 
 **Target: 1 live meeting at a time** (decided). This makes the baseline comfortable:
 
 | Load | Feasible on baseline? |
 |---|---|
-| 1 live meeting (small-model live pass) | ✅ comfortable — the design target |
+| 1 live meeting (recording only — no live ASR since v0.3) | ✅ comfortable — the design target |
 | Quality pass (large model) | ✅ queued after the meeting, ~faster than realtime on modern CPU |
 | Local LLM summary during a live meeting | ⚠️ RAM/CPU contention — summaries queue behind live ASR by design |
 
@@ -596,12 +670,45 @@ a GPU or bigger box raises it later without code changes.
   consent propagation, audit log), never in the prompt.
 - **Online/offline:** one architecture, two runtime profiles (§2.1) — not two builds.
   Cloud components are strictly additive; three admin profiles (air-gapped / auto /
-  per-workspace local-only); audio never leaves the server in any mode; CI tests the
+  per-workspace local-only); audio local by default — cloud ASR only in Online mode
+  with per-meeting consent (D15 [REVISED v0.3-online]); CI tests the
   offline profile with network blocked.
 - **Sealed-audio format (D11):** AES-256-CTR `.neura` files — CTR chosen to preserve
   crash-safety (encrypt+fsync per chunk, no finalization) and Range-seekable playback;
   tamper detection on audio is an explicit non-goal (threat model = stolen disk);
   per-file nonce uniqueness is a hard requirement.
+- **Tamper-evident admin log (D12):** destructive admin actions (incl. meeting/archive
+  removal) append to a hash-chained JSONL file — admin-read-only, no edit path via any
+  API, chain-verify routine; complements (does not replace) the DB audit table.
+- **Compute modes (D13):** ASR device `cpu`/`cuda`/`auto` as a runtime setting; `auto`
+  falls back to CPU on load failure (logged, never fatal). CPU remains the baseline.
+- **Generation UX & grounding (D5 amendment):** long-running generations must be
+  user-cancellable (stop button → request cancellation reaches the backend); summaries
+  and skill outputs must be grounded in stored transcripts/documents only — with no or
+  thin data the reply states so in Persian instead of inventing content; grounding cases
+  are part of the Persian eval set.
+- **Online mode (per D3/D4, packaging):** the installer optionally collects OpenRouter
+  and Supabase credentials into the OS secret store (D8 — never config files); with no
+  keys the platform runs fully offline, and the UI shows cloud features as visible but
+  disabled. Consent gate and air-gapped profile behavior are unchanged.
+- **v0.3 revision (user decision, 2026-08-08):** live caption pass removed (D2 rev —
+  recording stays live/crash-safe; one GPU quality pass with a percent progress bar);
+  compute becomes one GPU-first mode with silent CPU fallback, no setting (D13 rev);
+  model lineup locked as D14 (large-v3 int8 GPU + Persian-turbo bake-off, pyannote 3.1,
+  qwen3.5:4b think-false, bge-m3); hardware baseline now 16 GB RAM / 8-core / 4 GB GPU;
+  UI restructure: search in the top bar, enlarged left assistant panel (removed from the
+  right menu), a Logs menu item consolidating job queue + audit views, one Meetings
+  section (live on top, records under), named multi-mic registration per meeting.
+- **Platform-control assistant (D7 amendment):** the AI assistant is a global UI
+  surface — a persistent docked panel available on every page — and may administer the
+  platform (delete records, change settings like the ASR device) **only through the
+  Skill Runtime**: admin-capable skills declare and get `is_admin` enforced in the
+  runtime (never in the prompt), every side-effectful skill remains behind the D7
+  rule-2 human-confirmation gate, destructive admin skills reuse the same core
+  functions as the REST endpoints and chain to the D12 log in that shared path (no
+  duplicated deletion logic), and the assistant gets no capability that the REST API
+  does not already expose with the same checks. Transcripts/documents remain untrusted
+  input — a transcript can never trigger an unconfirmed action (rule 2 unchanged).
 - **Hardening & operations (D8, D9):** crash-safe recording; encryption at rest (SQLCipher
   + DPAPI-held keys); data lifecycle (retention, true deletion, «محرمانه» sensitivity
   levels); numbered-SQL migrations from 001 (not Alembic — no ORM in the stack);

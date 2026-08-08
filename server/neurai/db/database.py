@@ -128,6 +128,19 @@ class Database:
         with self._lock:
             self._conn.close()
 
+    def backup_to(self, dest_path: str | Path) -> None:
+        """Consistent snapshot via the SQLite backup API. With SQLCipher the
+        destination is written through the same codec/key, so the snapshot is
+        as encrypted as the live DB — what gets uploaded is ciphertext whose
+        key never leaves this machine (D4 backup, true E2E)."""
+        dest_conn, _row, _enc = _connect(dest_path)
+        try:
+            with self._lock:
+                self._conn.backup(dest_conn)
+            dest_conn.commit()
+        finally:
+            dest_conn.close()
+
     # -- settings (runtime-mutable, non-secret config) -------------------------
 
     def get_setting(self, key: str, default: str | None = None) -> str | None:

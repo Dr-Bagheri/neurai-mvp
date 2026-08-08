@@ -48,6 +48,13 @@ class JobQueue:
         self._wake.set()
         return job_id
 
+    def set_progress(self, job_id: int, pct: int) -> None:
+        """Percent progress (0–100) persisted on the job row (D2 v0.3).
+        Thread-safe — quality-pass callbacks fire from worker threads."""
+        get_db().execute(
+            "UPDATE jobs SET progress=? WHERE id=?", (max(0, min(100, int(pct))), job_id),
+        )
+
     # -- worker ---------------------------------------------------------------
 
     async def start(self) -> None:
@@ -101,7 +108,9 @@ class JobQueue:
                 )
                 continue
             try:
-                await handler(json.loads(row["payload"]))
+                payload = json.loads(row["payload"])
+                payload["_job_id"] = job_id  # lets handlers report progress
+                await handler(payload)
                 db.execute(
                     "UPDATE jobs SET status='done', finished_at=datetime('now') WHERE id=?",
                     (job_id,),

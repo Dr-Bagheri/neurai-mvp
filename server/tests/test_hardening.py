@@ -129,12 +129,15 @@ def test_crash_recovery_resumes_live_meeting(client):
     signup(client, "admin")
     meeting_id = client.post("/api/meetings", json={"title": "جلسه قطع برق"}).json()["id"]
     cfg = get_config()
-    path = cfg.recordings_dir / f"meeting_{meeting_id}.neura"
+    path = cfg.recordings_dir / f"meeting_{meeting_id}_mic_1.neura"
     w = EncryptedAudioWriter(path)
     w.write((np.random.default_rng(1).standard_normal(16000 * 2) * 3000).astype(np.int16).tobytes())
     w.close()
-    get_db().execute("UPDATE meetings SET status='live', audio_path=? WHERE id=?",
-                     (str(path), meeting_id))
+    db = get_db()
+    db.insert("INSERT INTO meeting_mics(meeting_id, name, audio_path) VALUES(?,?,?)",
+              (meeting_id, "میکروفون ۱", str(path)))
+    db.execute("UPDATE meetings SET status='live', audio_path=? WHERE id=?",
+               (str(path), meeting_id))
 
     assert recover_crashed_meetings() == [meeting_id]
     meeting = get_db().query_one("SELECT * FROM meetings WHERE id=?", (meeting_id,))
@@ -316,6 +319,47 @@ def test_export_meeting_is_owner_scoped(client):
     bob_ctx = SkillContext(user_id=bob_id, username="bob", confirmed=True)
     with pytest.raises(RuntimeError):
         anyio.run(export_meeting, meeting_id, bob_ctx, "txt", "plain")
+
+
+def test_backend_down_maps_to_503(client):
+    """0.1.1: a dead/slow model backend is an operational condition — the API
+    answers 503 with an actionable Persian message, never a raw 500."""
+    import neurai.harness.harness as harness_mod
+    from neurai.harness.backends import BackendError
+    from neurai.harness.harness import Harness
+
+    signup(client, "admin")
+
+    class DeadBackend:
+        source = "local"
+
+        async def chat(self, messages, tools=None, timeout=None, options=None):
+            raise BackendError("Ollama unreachable or failed: ReadTimeout")
+
+    h = Harness()
+    h.set_backends(DeadBackend, DeadBackend)
+    harness_mod.set_harness(h)
+
+    chat_id = client.post("/api/chats", json={}).json()["id"]
+    # no intent match → tier-2 tool loop → local backend raises BackendError
+    r = client.post(f"/api/chats/{chat_id}/messages", json={"content": "سلام، حالت چطوره؟"})
+    assert r.status_code == 503
+    assert "Ollama" in r.json()["detail"] or "مدل" in r.json()["detail"]
+
+    # intent tier behaves the same: skill hits the dead backend → 503, not
+    # a flat "skill failed" chat message
+    from neurai.db import get_db
+
+    meeting_id = client.post("/api/meetings", json={"title": "جلسه"}).json()["id"]
+    get_db().insert(
+        "INSERT INTO transcript_segments(meeting_id, pass, start_ms, end_ms, text) "
+        "VALUES(?, 'quality', 0, 1000, "
+        "'در این جلسه درباره برنامه سه‌ماهه محصول و تقسیم کارهای تیم صحبت کردیم')",
+        (meeting_id,),
+    )
+    r = client.post(f"/api/chats/{chat_id}/messages",
+                    json={"content": f"جلسه {meeting_id} رو خلاصه کن"})
+    assert r.status_code == 503
 
 
 def test_migrations_are_versioned(app_env):

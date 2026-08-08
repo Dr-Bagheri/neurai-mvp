@@ -6,6 +6,15 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "webui"],
       "port": 5173
+    },
+    {
+      "name": "webui-alt",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set NEURAI_API_PORT=8481&& npm run dev --prefix webui -- --port 5273 --strictPort"
+      ],
+      "port": 5273
     }
   ]
 }

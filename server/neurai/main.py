@@ -24,10 +24,13 @@ def _register_job_handlers() -> None:
     from neurai.jobs import get_job_queue
     from neurai.rag.ingest import index_document_job, index_transcript_job
 
+    from neurai.backup import backup_snapshot_job
+
     queue = get_job_queue()
     queue.register("quality_pass", run_quality_pass)
     queue.register("index_transcript", index_transcript_job)
     queue.register("index_document", index_document_job)
+    queue.register("backup_snapshot", backup_snapshot_job)
 
 
 @asynccontextmanager
@@ -66,7 +69,18 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
-    from neurai.api import action_items, admin, auth, chat, documents, meetings, search, ws
+    from neurai.api import action_items, admin, auth, chat, documents, meetings, search, system, ws
+    from neurai.harness.backends import BackendError
+
+    @app.exception_handler(BackendError)
+    async def _backend_error(request, exc: BackendError):
+        # A model backend being down/slow is an operational condition, not a
+        # server bug: answer 503 with an actionable Persian message.
+        log.error("model backend error: %s", exc)
+        return JSONResponse(
+            {"detail": "سرویس مدل زبانی پاسخ نداد؛ در حالت محلی از روشن بودن Ollama مطمئن شوید و در حالت ابری کلید API و اتصال اینترنت را بررسی کنید، سپس دوباره تلاش کنید."},
+            status_code=503,
+        )
 
     app.include_router(auth.router)
     app.include_router(meetings.router)
@@ -76,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(documents.router)
     app.include_router(search.router)
     app.include_router(admin.router)
+    app.include_router(system.router)
     app.include_router(ws.router)
 
     @app.get("/api/health")

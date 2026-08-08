@@ -118,14 +118,68 @@ def _skill_result_to_text(skill: str, result: dict[str, Any]) -> str:
         )
     if "meetings" in result:
         return "\n".join(f"• {m['id']}: {m['title']} ({m['status']})" for m in result["meetings"]) or "جلسه‌ای ندارید."
+    # platform-control results (D7 amendment)
+    if result.get("deleted"):
+        what = result.get("title") or result.get("filename") or ""
+        return f"حذف شد: {what}".strip()
+    if "updated" in result:
+        return "تنظیمات به‌روزرسانی شد: " + "، ".join(f"{k} = {v}" for k, v in result["updated"].items())
+    if "job_id" in result:
+        return f"پشتیبان‌گیری آغاز شد (کار شماره {result['job_id']})."
+    if "status" in result and isinstance(result["status"], dict):
+        s = result["status"]
+        lines = [
+            f"پروفایل اتصال: {s['profile']}",
+            f"جلسه زنده: {'بله' if s['live_meeting_active'] else 'خیر'}",
+            f"ابر (OpenRouter): {'پیکربندی شده' if s['openrouter_configured'] else 'پیکربندی نشده'}",
+            f"پشتیبان (Supabase): {'پیکربندی شده' if s['supabase_configured'] else 'پیکربندی نشده'}",
+            f"کاربران: {s['users']} — جلسات: {s['meetings']}",
+        ]
+        if s.get("jobs"):
+            lines.append("صف کارها: " + "، ".join(f"{k}: {v}" for k, v in s["jobs"].items()))
+        return "\n".join(lines)
     return json.dumps(result, ensure_ascii=False)
+
+
+STOPPED_FA = "⏹ تولید پاسخ متوقف شد."
 
 
 @router.post("/{chat_id}/messages")
 async def send_message(chat_id: int, body: MessageIn, user: CurrentUser = Depends(current_user)):
+    import asyncio
+
+    from neurai.api.generation import get_generation_registry
+
     _own_chat(user, chat_id)
     _store_message(chat_id, "user", body.content)
 
+    registry = get_generation_registry()
+    task = asyncio.create_task(_generate_reply(chat_id, body, user))
+    registry.register(chat_id, task)
+    try:
+        return await task
+    except asyncio.CancelledError:
+        if registry.was_user_cancelled(chat_id):
+            # user hit stop: the in-flight backend request was aborted (CPU
+            # freed); record the state honestly, not as an error (D5)
+            msg_id = _store_message(chat_id, "assistant", STOPPED_FA)
+            return {"type": "stopped", "id": msg_id, "content": STOPPED_FA}
+        task.cancel()  # client disconnected: stop the backend work too
+        raise
+    finally:
+        registry.unregister(chat_id)
+
+
+@router.post("/{chat_id}/cancel")
+def cancel_generation(chat_id: int, user: CurrentUser = Depends(current_user)):
+    """Stop button (D5): aborts the in-flight LLM request for this chat."""
+    from neurai.api.generation import get_generation_registry
+
+    _own_chat(user, chat_id)
+    return {"cancelled": get_generation_registry().cancel(chat_id)}
+
+
+async def _generate_reply(chat_id: int, body: MessageIn, user: CurrentUser):
     ctx = SkillContext(user_id=user.id, username=user.username,
                        is_admin=user.is_admin, allow_cloud=body.allow_cloud)
     runtime = get_skill_runtime()
@@ -134,6 +188,10 @@ async def send_message(chat_id: int, body: MessageIn, user: CurrentUser = Depend
     intent = route(body.content, user.id)
     if intent is not None:
         result = await runtime.execute(intent.skill, intent.params, ctx)
+        if result.get("backend_down"):
+            from neurai.harness.backends import BackendError
+
+            raise BackendError(result["error"])  # app handler maps to 503
         if result.get("confirmation_required"):
             return {"type": "confirmation_required", "skill": intent.skill,
                     "params": intent.params, "message": result.get("message_fa", "")}
@@ -157,7 +215,7 @@ async def send_message(chat_id: int, body: MessageIn, user: CurrentUser = Depend
         return await runtime.execute(tc.name, tc.arguments, context)
 
     result = await get_harness().tool_loop(
-        history, runtime.tool_schemas(), execute_tool, ctx,
+        history, runtime.tool_schemas(include_admin=ctx.is_admin), execute_tool, ctx,
         Constraints(allow_cloud=body.allow_cloud),
     )
 
@@ -189,6 +247,10 @@ async def confirm_skill(chat_id: int, body: ConfirmIn, user: CurrentUser = Depen
     ctx = SkillContext(user_id=user.id, username=user.username, is_admin=user.is_admin,
                        allow_cloud=body.allow_cloud, confirmed=True)
     result = await get_skill_runtime().execute(body.skill, body.params, ctx)
+    if result.get("backend_down"):
+        from neurai.harness.backends import BackendError
+
+        raise BackendError(result["error"])  # app handler maps to 503
     text = _skill_result_to_text(body.skill, result)
     if "download" in result:
         text = f"{text}\nدریافت فایل: {result['download']}"

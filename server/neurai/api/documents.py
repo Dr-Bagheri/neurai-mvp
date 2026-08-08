@@ -54,15 +54,13 @@ async def upload_document(file: UploadFile, user: CurrentUser = Depends(current_
 
 @router.delete("/{doc_id}")
 def delete_document(doc_id: int, user: CurrentUser = Depends(current_user)):
-    db = get_db()
-    doc = db.query_one("SELECT * FROM documents WHERE id=? AND owner_id=?", (doc_id, user.id))
-    if doc is None:
-        raise HTTPException(404, "سند پیدا نشد")
-    db.execute("DELETE FROM rag_chunks WHERE owner_id=? AND kind='document' AND ref_id=?",
-               (user.id, doc_id))
-    db.execute("DELETE FROM documents WHERE id=?", (doc_id,))
+    """Owner-scoped via the shared core (admins may delete any — D12-chained
+    there when crossing owners)."""
+    from neurai.platform_ops import remove_document
+
     try:
-        Path(doc["path"]).unlink(missing_ok=True)
-    except OSError:
-        pass
+        remove_document(doc_id, actor=user.username,
+                        requester_user_id=user.id, is_admin=user.is_admin)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
     return {"ok": True}

@@ -1,7 +1,41 @@
+import { useState, type FormEvent } from "react";
+import { api, ApiError } from "../api/client";
 import { useApp } from "../state/AppContext";
 
 export function SettingsPage() {
   const { user, settings, setSettings } = useApp();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const changePassword = async (e: FormEvent) => {
+    e.preventDefault();
+    setMessage(null);
+    if (next !== confirm) {
+      setMessage({ ok: false, text: "تکرار گذرواژهٔ جدید یکسان نیست" });
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.changePassword(current, next);
+      setMessage({
+        ok: true,
+        text: "گذرواژه عوض شد؛ نشست‌های دیگر شما روی همهٔ دستگاه‌ها باطل شدند.",
+      });
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+    } catch (err) {
+      setMessage({
+        ok: false,
+        text: err instanceof ApiError ? err.detail : "تغییر گذرواژه ممکن نشد",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <>
@@ -29,37 +63,55 @@ export function SettingsPage() {
       </div>
 
       <div className="card">
-        <h3>پروفایل صوتی (اختیاری)</h3>
-        <p className="muted small">
-          با ضبط حدود ۳۰ ثانیه از صدای خود، در جلسه‌های «میکروفون اتاق» به‌صورت خودکار
-          شناسایی می‌شوید — بدون نیاز به دور معارفه. پروفایل فقط یک بردار صوتی است، روی سرور
-          دفتر می‌ماند و هر زمان می‌توانید حذفش کنید.
-        </p>
-        {user?.has_voice_profile ? (
-          <div className="row">
-            <span className="badge ok">✓ پروفایل صوتی ثبت شده</span>
-            <button
-              className="btn danger sm"
-              onClick={() => window.alert("در نسخهٔ نمایشی غیرفعال است.")}
-            >
-              حذف پروفایل
-            </button>
-          </div>
-        ) : (
+        <h3>تغییر گذرواژه</h3>
+        <form onSubmit={changePassword} style={{ maxWidth: 360 }}>
+          <label className="small muted">گذرواژهٔ فعلی</label>
+          <input
+            className="input"
+            type="password"
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+            style={{ marginBottom: 10 }}
+          />
+          <label className="small muted">گذرواژهٔ جدید (حداقل ۶ نویسه)</label>
+          <input
+            className="input"
+            type="password"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            style={{ marginBottom: 10 }}
+          />
+          <label className="small muted">تکرار گذرواژهٔ جدید</label>
+          <input
+            className="input"
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            style={{ marginBottom: 12 }}
+          />
+          {message && (
+            <p className={`badge ${message.ok ? "ok" : "danger"}`} style={{ marginBottom: 10 }}>
+              {message.text}
+            </p>
+          )}
           <button
             className="btn primary"
-            onClick={() => window.alert("در نسخهٔ نمایشی ضبط غیرفعال است.")}
+            disabled={busy || !current || next.length < 6 || !confirm}
           >
-            🎙️ ضبط پروفایل صوتی
+            {busy ? "در حال ذخیره…" : "تغییر گذرواژه"}
           </button>
-        )}
+        </form>
       </div>
 
       <div className="card">
         <h3>حساب کاربری</h3>
         <p className="muted small" style={{ marginBottom: 0 }}>
-          نام کاربری: <strong>{user?.username}</strong> · حساب‌ها محلی‌اند و روی سرور دفتر
-          نگهداری می‌شوند؛ برای تغییر گذرواژه به مدیر سیستم مراجعه کنید.
+          نام کاربری: <strong className="ltr">{user?.username}</strong> · نام نمایشی:{" "}
+          <strong>{user?.display_name}</strong>
+          {user?.is_admin && " · مدیر"}
+          <br />
+          حساب‌ها محلی‌اند و روی سرور دفتر نگهداری می‌شوند؛ هیچ داده‌ای به اینترنت ارسال
+          نمی‌شود.
         </p>
       </div>
     </>

@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
-import { api } from "../api/client";
-import type { Meeting } from "../api/types";
+import { Link, useParams } from "react-router-dom";
+import { api, ApiError } from "../api/client";
+import type {
+  Bookmark,
+  Meeting,
+  MeetingMic,
+  MeetingNote,
+  Summary,
+  TranscriptSegment,
+} from "../api/types";
 import { ProvenanceBadge } from "../components/ProvenanceBadge";
 import {
   CaptureModeBadge,
@@ -10,66 +17,127 @@ import {
   MeetingStatusBadge,
 } from "../components/StatusBadges";
 import { formatJalali } from "../lib/jalali";
-import { formatClock, formatDurationFa } from "../lib/time";
+import { formatClock } from "../lib/time";
 import { useApp } from "../state/AppContext";
 
-type Tab = "transcript" | "summary" | "minutes" | "notes";
+type Tab = "transcript" | "summaries" | "notes";
+
+const SUMMARY_KIND_FA: Record<string, string> = {
+  summary: "خلاصهٔ جلسه",
+  action_items: "اقدامات",
+  minutes: "صورتجلسه",
+  formal: "متن رسمی (نوشتاری)",
+};
 
 export function MeetingPage() {
   const { id } = useParams<{ id: string }>();
+  const meetingId = Number(id);
   const { d } = useApp();
-  const [meeting, setMeeting] = useState<Meeting | null | undefined>(undefined);
+
+  const [meeting, setMeeting] = useState<Meeting | null>(null);
+  const [segments, setSegments] = useState<TranscriptSegment[]>([]);
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  const [notes, setNotes] = useState<MeetingNote[]>([]);
+  const [summaries, setSummaries] = useState<Summary[]>([]);
+  const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("transcript");
+  const [newNote, setNewNote] = useState("");
+  const [playheadMs, setPlayheadMs] = useState(0);
+  const [audioAvailable, setAudioAvailable] = useState(true);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [mics, setMics] = useState<MeetingMic[]>([]);
+  const [playbackMic, setPlaybackMic] = useState<number | undefined>(undefined);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Simulated audio-linked playback (D2): a clock stands in for the <audio>
-  // element until recordings are served by the engine.
-  const [playhead, setPlayhead] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [notesDraft, setNotesDraft] = useState("");
-  const notesTimer = useRef<number>();
-
-  useEffect(() => {
-    if (!id) return;
-    void api.getMeeting(id).then((m) => {
+  const load = async () => {
+    try {
+      const [m, segs, bms, ns, sums] = await Promise.all([
+        api.getMeeting(meetingId),
+        api.getTranscript(meetingId),
+        api.listBookmarks(meetingId),
+        api.listNotes(meetingId),
+        api.listSummaries(meetingId),
+      ]);
       setMeeting(m);
-      if (m) setNotesDraft(m.notes);
-    });
-  }, [id]);
+      setSegments(segs);
+      setBookmarks(bms);
+      setNotes(ns);
+      setSummaries(sums);
+      // per-mic playback (v0.3) — best-effort
+      void api
+        .listMics(meetingId)
+        .then(setMics)
+        .catch(() => setMics([]));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : "خطا در بارگذاری جلسه");
+    }
+  };
 
   useEffect(() => {
-    if (!playing) return;
-    const t = setInterval(() => setPlayhead((p) => p + 0.5), 500);
-    return () => clearInterval(t);
-  }, [playing]);
+    if (Number.isFinite(meetingId)) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingId]);
 
-  const activeSegment = useMemo(
-    () =>
-      meeting?.segments.find((s) => playhead >= s.start_s && playhead < s.end_s)?.id ?? null,
-    [meeting, playhead],
-  );
+  // Quality-pass progress (D2 v0.3): poll percent + status while processing;
+  // reload everything when the transcript lands.
+  useEffect(() => {
+    if (meeting?.status !== "processing") return;
+    const timer = setInterval(async () => {
+      try {
+        const m = await api.getMeeting(meetingId);
+        if (m.status !== "processing") {
+          clearInterval(timer);
+          await load();
+          return;
+        }
+        try {
+          const p = await api.meetingProgress(meetingId);
+          setProgress(Math.max(0, Math.min(100, p.progress)));
+        } catch {
+          setProgress(null); // older server — indeterminate
+        }
+      } catch {
+        // transient — keep polling
+      }
+    }, 2500);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meeting?.status, meetingId]);
 
-  if (meeting === undefined) return <p className="muted">در حال بارگذاری…</p>;
-  if (meeting === null) return <p className="muted">جلسه پیدا نشد.</p>;
+  const activeSegmentId = useMemo(() => {
+    const s = segments.find((x) => playheadMs >= x.start_ms && playheadMs < x.end_ms);
+    return s?.id ?? null;
+  }, [segments, playheadMs]);
 
-  const seekTo = (s: number) => {
-    setPlayhead(s);
-    setPlaying(true);
+  if (error) return <p className="badge danger">{error}</p>;
+  if (!meeting) return <p className="muted">در حال بارگذاری…</p>;
+
+  const seekTo = (ms: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = ms / 1000;
+    void audio.play().catch(() => undefined);
   };
 
-  const relabel = async (from: string) => {
-    const to = window.prompt(`نام جدید برای «${from}»؟`, "");
+  const relabel = async (speaker: string) => {
+    const to = window.prompt(`نام جدید برای «${speaker}»؟`, "");
     if (!to?.trim()) return;
-    const updated = await api.relabelSpeaker(meeting.id, from, to.trim());
-    if (updated) setMeeting(updated);
+    try {
+      await api.relabelSpeaker(meetingId, speaker, to.trim());
+      setSegments(await api.getTranscript(meetingId));
+    } catch (e) {
+      window.alert(e instanceof ApiError ? e.detail : "تغییر نام ممکن نشد");
+    }
   };
 
-  const saveNotes = (value: string) => {
-    setNotesDraft(value);
-    window.clearTimeout(notesTimer.current);
-    notesTimer.current = window.setTimeout(() => {
-      void api.saveNotes(meeting.id, value);
-    }, 600);
+  const addNote = async () => {
+    if (!newNote.trim()) return;
+    await api.addNote(meetingId, newNote.trim());
+    setNewNote("");
+    setNotes(await api.listNotes(meetingId));
   };
+
+  const isLivePass = segments.length > 0 && segments[0].pass_name === "live";
 
   return (
     <>
@@ -78,44 +146,60 @@ export function MeetingPage() {
           <div>
             <h2 style={{ marginBottom: 4 }}>{meeting.title}</h2>
             <div className="muted small">
-              {d(formatJalali(new Date(meeting.started_at), true))} ·{" "}
-              {d(formatDurationFa(meeting.duration_s))} · {meeting.participants.join("، ")}
+              {d(formatJalali(new Date(meeting.started_at ?? meeting.created_at), true))}
             </div>
           </div>
           <div className="row wrap">
             <MeetingStatusBadge status={meeting.status} />
             <CaptureModeBadge mode={meeting.capture_mode} />
             <ConfidentialBadge sensitivity={meeting.sensitivity} />
-            <LocalOnlyBadge localOnly={meeting.local_only} />
+            <LocalOnlyBadge allowCloud={meeting.allow_cloud} />
           </div>
         </div>
 
-        <div className="player" style={{ marginTop: 14 }}>
-          <button className="btn sm" onClick={() => setPlaying((p) => !p)}>
-            {playing ? "⏸" : "▶"}
-          </button>
-          <div
-            className="bar"
-            onClick={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              const frac = (e.clientX - r.left) / r.width;
-              setPlayhead(frac * meeting.duration_s);
-            }}
-          >
-            <div
-              className="fill"
-              style={{ width: `${(playhead / meeting.duration_s) * 100}%` }}
+        {audioAvailable ? (
+          <>
+            {mics.length > 1 && (
+              <div className="row" style={{ marginTop: 12 }}>
+                <span className="muted small">پخش از:</span>
+                <select
+                  className="input"
+                  style={{ maxWidth: 260 }}
+                  value={playbackMic ?? ""}
+                  onChange={(e) =>
+                    setPlaybackMic(e.target.value === "" ? undefined : Number(e.target.value))
+                  }
+                >
+                  <option value="">میکروفون اول</option>
+                  {mics.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      🎙️ {m.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <audio
+              ref={audioRef}
+              controls
+              preload="metadata"
+              src={api.audioUrl(meetingId, playbackMic)}
+              style={{ width: "100%", marginTop: 10 }}
+              onTimeUpdate={(e) => setPlayheadMs(e.currentTarget.currentTime * 1000)}
+              onError={() => setAudioAvailable(false)}
             />
-          </div>
-          <span className="clock">
-            {d(formatClock(playhead))} / {d(formatClock(meeting.duration_s))}
-          </span>
-        </div>
-        {meeting.bookmarks.length > 0 && (
+          </>
+        ) : (
+          <p className="muted small" style={{ marginTop: 14 }}>
+            فایل صوتی این جلسه (هنوز) در دسترس نیست.
+          </p>
+        )}
+
+        {bookmarks.length > 0 && (
           <div className="row wrap" style={{ marginTop: 10 }}>
-            {meeting.bookmarks.map((b) => (
-              <button key={b.id} className="btn sm" onClick={() => seekTo(b.at_s)}>
-                🔖 {b.label} ({d(formatClock(b.at_s))})
+            {bookmarks.map((b) => (
+              <button key={b.id} className="btn sm" onClick={() => seekTo(b.t_ms)}>
+                🔖 {b.note || "علامت"} ({d(formatClock(b.t_ms / 1000))})
               </button>
             ))}
           </div>
@@ -131,16 +215,10 @@ export function MeetingPage() {
             رونوشت
           </button>
           <button
-            className={"tab" + (tab === "summary" ? " active" : "")}
-            onClick={() => setTab("summary")}
+            className={"tab" + (tab === "summaries" ? " active" : "")}
+            onClick={() => setTab("summaries")}
           >
-            خلاصه و مصوبات
-          </button>
-          <button
-            className={"tab" + (tab === "minutes" ? " active" : "")}
-            onClick={() => setTab("minutes")}
-          >
-            صورتجلسه و خروجی
+            خلاصه و خروجی‌ها
           </button>
           <button
             className={"tab" + (tab === "notes" ? " active" : "")}
@@ -153,151 +231,120 @@ export function MeetingPage() {
         {tab === "transcript" && (
           <>
             {meeting.status === "processing" && (
-              <p className="badge warn" style={{ marginBottom: 12 }}>
-                گذر کیفیت در حال اجراست — این رونوشتِ زندهٔ تقریبی است و به‌زودی با نسخهٔ
-                دقیقِ دارای برچسب گوینده جایگزین می‌شود.
-              </p>
-            )}
-            <p className="muted small">
-              روی هر جمله کلیک کنید تا همان لحظه پخش شود؛ روی نام گوینده کلیک کنید تا
-              تغییر نام دهید (به همهٔ بخش‌های همان گوینده اعمال می‌شود).
-            </p>
-            {meeting.segments.map((s) => (
-              <div
-                key={s.id}
-                className={"segment" + (activeSegment === s.id ? " playing" : "")}
-                onClick={() => seekTo(s.start_s)}
-              >
-                <span className="ts">{d(formatClock(s.start_s))}</span>
-                <div>
-                  {s.speaker && (
-                    <span
-                      className="speaker"
-                      title="تغییر نام گوینده"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void relabel(s.speaker!);
-                      }}
-                    >
-                      {s.speaker}:
-                    </span>
-                  )}
-                  {s.bookmarked && <span className="bookmark-flag">🔖 </span>}
-                  {s.text}
+              <div style={{ marginBottom: 16 }}>
+                <div className="row between">
+                  <strong>
+                    رونوشت در حال آماده‌سازی{progress !== null && <> — ٪{d(progress)}</>}
+                  </strong>
+                  <span className="badge warn">گذر کیفیت روی GPU</span>
+                </div>
+                <div
+                  className={"progress" + (progress === null ? " indeterminate" : "")}
+                  style={{ marginTop: 8 }}
+                >
+                  <div
+                    className="fill"
+                    style={progress !== null ? { width: `${progress}%` } : undefined}
+                  />
                 </div>
               </div>
-            ))}
-          </>
-        )}
-
-        {tab === "summary" &&
-          (meeting.summary ? (
-            <>
-              <div className="row between">
-                <h3>خلاصهٔ جلسه</h3>
-                <ProvenanceBadge provenance={meeting.summary.provenance} />
-              </div>
-              <p>{meeting.summary.overview}</p>
-              <h3 style={{ marginTop: 18 }}>مصوبات</h3>
-              <ol>
-                {meeting.summary.decisions.map((dec, i) => (
-                  <li key={i}>{dec}</li>
-                ))}
-              </ol>
-            </>
-          ) : (
-            <div className="empty">
-              خلاصه پس از پایان گذر کیفیت ساخته می‌شود.
-            </div>
-          ))}
-
-        {tab === "minutes" && (
-          <>
-            <h3>خروجی صورتجلسه</h3>
-            <p className="muted small">
-              متن گفتاری رونوشت پیش از خروجی، به فارسی رسمی (نوشتاری) تبدیل می‌شود؛ تاریخ‌ها
-              شمسی و قالب شامل حاضرین، دستور جلسه، مصوبات با مسئول هر بند و محل امضاست.
-            </p>
-            <div className="row wrap" style={{ marginBottom: 16 }}>
-              <select className="input" style={{ width: 260 }} defaultValue="official">
-                <option value="official">صورتجلسهٔ رسمی (اداری)</option>
-                <option value="standup">قالب استندآپ</option>
-                <option value="decision">قالب جلسهٔ تصمیم‌گیری</option>
-              </select>
-              <button
-                className="btn"
-                onClick={() => window.alert("در نسخهٔ نمایشی، خروجی Word توسط سرور ساخته می‌شود.")}
-              >
-                خروجی Word
-              </button>
-              <button
-                className="btn"
-                onClick={() => window.alert("در نسخهٔ نمایشی، خروجی PDF توسط سرور ساخته می‌شود.")}
-              >
-                خروجی PDF
-              </button>
-              <button
-                className="btn"
-                onClick={() => window.alert("در نسخهٔ نمایشی، زیرنویس SRT توسط سرور ساخته می‌شود.")}
-              >
-                زیرنویس SRT
-              </button>
-            </div>
-            <div className="card" style={{ background: "var(--surface-2)" }}>
-              <h3 style={{ textAlign: "center" }}>صورتجلسه</h3>
-              <p>
-                <strong>موضوع:</strong> {meeting.title}
-                <br />
-                <strong>تاریخ:</strong> {d(formatJalali(new Date(meeting.started_at), true))}
-                <br />
-                <strong>حاضرین:</strong> {meeting.participants.join("، ")}
+            )}
+            {isLivePass && meeting.status === "done" && (
+              <p className="badge warn" style={{ marginBottom: 12 }}>
+                نمایش رونوشت اولیه (گذر کیفیت هنوز خروجی نداده است).
               </p>
-              <p>
-                <strong>مصوبات:</strong>
-              </p>
-              <ol>
-                {(meeting.summary?.decisions ?? ["— پس از پایان پردازش تکمیل می‌شود —"]).map(
-                  (dec, i) => (
-                    <li key={i}>{dec}</li>
-                  ),
-                )}
-              </ol>
-              <div className="row between" style={{ marginTop: 24 }}>
-                {meeting.participants.map((p) => (
-                  <div key={p} className="small muted" style={{ textAlign: "center" }}>
-                    {p}
-                    <br />
-                    امضا: ..................
+            )}
+            {segments.length === 0 ? (
+              <div className="empty">هنوز رونوشتی ثبت نشده است.</div>
+            ) : (
+              <>
+                <p className="muted small">
+                  روی هر جمله کلیک کنید تا همان لحظه پخش شود؛ روی نام گوینده کلیک کنید تا
+                  تغییر نام دهید (به همهٔ بخش‌های همان گوینده اعمال می‌شود).
+                </p>
+                {segments.map((s) => (
+                  <div
+                    key={s.id}
+                    className={"segment" + (activeSegmentId === s.id ? " playing" : "")}
+                    onClick={() => seekTo(s.start_ms)}
+                  >
+                    <span className="ts">{d(formatClock(s.start_ms / 1000))}</span>
+                    <div>
+                      {s.speaker && (
+                        <span
+                          className="speaker"
+                          title="تغییر نام گوینده"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void relabel(s.speaker!);
+                          }}
+                        >
+                          {s.speaker}:{" "}
+                        </span>
+                      )}
+                      {s.text}
+                    </div>
                   </div>
                 ))}
-              </div>
-            </div>
+              </>
+            )}
           </>
         )}
+
+        {tab === "summaries" &&
+          (summaries.length === 0 ? (
+            <div className="empty">
+              هنوز خلاصه‌ای ساخته نشده است. از «دستیار» بخواهید: «این جلسه رو خلاصه کن» —
+              خروجی صورتجلسه (Word/PDF/SRT) هم از طریق دستیار و با تأیید شما ساخته می‌شود.
+            </div>
+          ) : (
+            summaries.map((s) => (
+              <div key={s.id} style={{ marginBottom: 20 }}>
+                <div className="row between">
+                  <h3 style={{ margin: 0 }}>{SUMMARY_KIND_FA[s.kind] ?? s.kind}</h3>
+                  <div className="row">
+                    {s.model && <span className="badge plain ltr">{s.model}</span>}
+                    <ProvenanceBadge source={s.source} />
+                  </div>
+                </div>
+                <p style={{ whiteSpace: "pre-wrap" }}>{s.content}</p>
+              </div>
+            ))
+          ))}
 
         {tab === "notes" && (
           <>
-            <div className="row between">
-              <h3>یادداشت‌های شما</h3>
-              <button
-                className="btn sm"
-                onClick={() =>
-                  window.alert(
-                    "مهارت «ادغام یادداشت‌ها»: دستیار یادداشت‌های شما را با رونوشت ترکیب می‌کند و صورتجلسهٔ ساخت‌یافته می‌سازد. (در نسخهٔ نمایشی غیرفعال)",
-                  )
-                }
-              >
-                🤝 ادغام با رونوشت
+            <div className="row" style={{ marginBottom: 12 }}>
+              <input
+                className="input"
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                placeholder="یادداشت جدید…"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void addNote();
+                }}
+              />
+              <button className="btn primary sm" disabled={!newNote.trim()} onClick={() => void addNote()}>
+                افزودن
               </button>
             </div>
-            <textarea
-              className="input"
-              style={{ minHeight: 200 }}
-              value={notesDraft}
-              onChange={(e) => saveNotes(e.target.value)}
-              placeholder="در طول جلسه یادداشتی ثبت نشده است."
-            />
-            <p className="muted small">ذخیرهٔ خودکار فعال است.</p>
+            {notes.length === 0 ? (
+              <div className="empty">یادداشتی ثبت نشده است.</div>
+            ) : (
+              notes.map((n) => (
+                <div key={n.id} className="segment" style={{ cursor: "default" }}>
+                  <span className="ts">
+                    {n.t_ms !== null ? d(formatClock(n.t_ms / 1000)) : "—"}
+                  </span>
+                  <div>{n.text}</div>
+                </div>
+              ))
+            )}
+            <p className="muted small" style={{ marginTop: 10 }}>
+              «ادغام یادداشت‌ها با رونوشت» را از دستیار بخواهید تا صورتجلسه‌ای بسازد که
+              خودتان در نوشتنش سهیم بوده‌اید.{" "}
+              <Link to="/chat">رفتن به دستیار ←</Link>
+            </p>
           </>
         )}
       </div>

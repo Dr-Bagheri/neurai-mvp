@@ -48,6 +48,7 @@ class SkillManifest:
     parameters: dict[str, Any]  # JSON-schema (object) for arguments
     permissions: frozenset[str]
     side_effect: bool = False   # True → requires ctx.confirmed (rule 2)
+    admin: bool = False         # True → runtime enforces ctx.is_admin (D7 amendment)
 
     def __post_init__(self):
         unknown = self.permissions - KNOWN_PERMISSIONS
@@ -114,8 +115,11 @@ class SkillRuntime:
     def manifests(self) -> list[SkillManifest]:
         return [r.manifest for r in self._skills.values()]
 
-    def tool_schemas(self) -> list[dict[str, Any]]:
-        """Tool definitions for the harness tool-use loop (Ollama/OpenAI format)."""
+    def tool_schemas(self, include_admin: bool = False) -> list[dict[str, Any]]:
+        """Tool definitions for the harness tool-use loop (Ollama/OpenAI
+        format). Admin tools are only offered to admin drivers — enforcement
+        happens in execute() regardless; this just keeps the model from
+        proposing calls that would be denied."""
         return [
             {
                 "type": "function",
@@ -126,6 +130,7 @@ class SkillRuntime:
                 },
             }
             for r in self._skills.values()
+            if include_admin or not r.manifest.admin
         ]
 
     def _audit(self, ctx: SkillContext, name: str, params: dict[str, Any],
@@ -147,6 +152,13 @@ class SkillRuntime:
         reg = self._skills.get(name)
         if reg is None:
             self._audit(ctx, name, params, "", False, "unknown skill")
+            return {"error": f"unknown skill: {name}"}
+
+        # Admin enforcement (D7 amendment) — in the runtime, never the prompt.
+        # The response shape is IDENTICAL to an unknown skill so admin
+        # capabilities aren't probeable by non-admins; the audit records truth.
+        if reg.manifest.admin and not ctx.is_admin:
+            self._audit(ctx, name, params, "", False, "admin required")
             return {"error": f"unknown skill: {name}"}
 
         err = _validate_params(reg.manifest.parameters, params)
@@ -171,6 +183,8 @@ class SkillRuntime:
                 "message_fa": "این عملیات نیاز به تأیید شما دارد.",
             }
 
+        from neurai.harness.backends import BackendError
+
         try:
             result = await reg.handler(ctx, params)
             self._audit(ctx, name, params, str(result.get("resource", "")), True)
@@ -178,6 +192,10 @@ class SkillRuntime:
         except SkillError as e:
             self._audit(ctx, name, params, "", False, str(e))
             return {"error": str(e)}
+        except BackendError as e:
+            # operational, not a skill bug: callers map this to 503 (0.1.1)
+            self._audit(ctx, name, params, "", False, f"backend: {e}")
+            return {"error": str(e), "backend_down": True}
         except Exception as e:
             self._audit(ctx, name, params, "", False, f"internal: {e}")
             return {"error": "skill failed"}
@@ -191,8 +209,10 @@ def get_skill_runtime() -> SkillRuntime:
     if _runtime is None:
         _runtime = SkillRuntime()
         from .builtin import register_builtin_skills
+        from .platform import register_platform_skills
 
         register_builtin_skills(_runtime)
+        register_platform_skills(_runtime)
     return _runtime
 
 

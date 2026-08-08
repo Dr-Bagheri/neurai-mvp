@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { Meeting } from "../api/types";
+import type { Meeting, Series } from "../api/types";
+import { LiveMeetingSection } from "../components/LiveMeetingSection";
 import {
   CaptureModeBadge,
   ConfidentialBadge,
@@ -11,87 +12,97 @@ import {
 import { formatDurationFa } from "../lib/time";
 import { formatJalali } from "../lib/jalali";
 import { useApp } from "../state/AppContext";
+import { useChat } from "../state/ChatContext";
+
+function durationSeconds(m: Meeting): number | null {
+  if (!m.started_at || !m.ended_at) return null;
+  const ms = new Date(m.ended_at).getTime() - new Date(m.started_at).getTime();
+  return ms > 0 ? ms / 1000 : null;
+}
 
 export function DashboardPage() {
   const { d } = useApp();
-  const navigate = useNavigate();
+  const { mutationCounter } = useChat();
   const [meetings, setMeetings] = useState<Meeting[] | null>(null);
+  const [series, setSeries] = useState<Series[]>([]);
+  const [error, setError] = useState("");
+  const [reloadNonce, setReloadNonce] = useState(0);
 
+  // mutationCounter: refetch after a confirmed assistant action (e.g. the
+  // assistant deleted a meeting); reloadNonce: after live-section events.
   useEffect(() => {
-    void api.listMeetings().then(setMeetings);
-  }, []);
+    void Promise.all([api.listMeetings(), api.listSeries()])
+      .then(([ms, ss]) => {
+        setMeetings(ms);
+        setSeries(ss);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "خطا در بارگذاری"));
+  }, [mutationCounter, reloadNonce]);
 
+  if (error) return <p className="badge danger">{error}</p>;
   if (!meetings) return <p className="muted">در حال بارگذاری…</p>;
 
-  const series = new Map<string, Meeting[]>();
-  for (const m of meetings) {
-    if (m.series_name) {
-      series.set(m.series_name, [...(series.get(m.series_name) ?? []), m]);
-    }
-  }
+  const seriesTitle = new Map(series.map((s) => [s.id, s.title]));
 
   return (
     <>
-      <div className="row between" style={{ marginBottom: 16 }}>
-        <p className="muted" style={{ margin: 0 }}>
-          {d(meetings.length)} جلسه در بایگانی شما
-        </p>
-        <button className="btn primary" onClick={() => navigate("/live")}>
-          ＋ شروع جلسهٔ جدید
-        </button>
-      </div>
+      <LiveMeetingSection onMeetingsChanged={() => setReloadNonce((n) => n + 1)} />
 
-      {[...series.entries()].map(([name, list]) =>
-        list.length > 1 ? (
-          <div className="card" key={name} style={{ marginBottom: 16 }}>
-            <div className="row between">
-              <h3 style={{ margin: 0 }}>🔁 سری جلسات: {name}</h3>
-              <span className="muted small">{d(list.length)} جلسه</span>
-            </div>
-            <p className="muted small" style={{ margin: "6px 0 0" }}>
-              با شروع جلسهٔ بعدی این سری، کارهای باز و «از جلسهٔ قبل چه گذشت» به‌صورت خودکار
-              نمایش داده می‌شود.
-            </p>
-          </div>
-        ) : null,
-      )}
+      <p className="muted" style={{ margin: "16px 0 8px" }}>
+        {d(meetings.length)} جلسه در بایگانی شما
+      </p>
 
       <div className="card" style={{ padding: 0 }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>عنوان</th>
-              <th>تاریخ</th>
-              <th>مدت</th>
-              <th>حالت ضبط</th>
-              <th>وضعیت</th>
-            </tr>
-          </thead>
-          <tbody>
-            {meetings.map((m) => (
-              <tr key={m.id}>
-                <td>
-                  <Link to={`/meetings/${m.id}`}>
-                    <strong>{m.title}</strong>
-                  </Link>
-                  <span style={{ marginInlineStart: 8 }} className="row" >
-                    <ConfidentialBadge sensitivity={m.sensitivity} />
-                    <LocalOnlyBadge localOnly={m.local_only} />
-                  </span>
-                  <div className="muted small">{m.participants.join("، ")}</div>
-                </td>
-                <td className="muted">{d(formatJalali(new Date(m.started_at)))}</td>
-                <td className="muted">{d(formatDurationFa(m.duration_s))}</td>
-                <td>
-                  <CaptureModeBadge mode={m.capture_mode} />
-                </td>
-                <td>
-                  <MeetingStatusBadge status={m.status} />
-                </td>
+        {meetings.length === 0 ? (
+          <div className="empty">
+            هنوز جلسه‌ای ثبت نشده است — از «شروع جلسهٔ جدید» شروع کنید.
+          </div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>عنوان</th>
+                <th>تاریخ</th>
+                <th>مدت</th>
+                <th>حالت ضبط</th>
+                <th>وضعیت</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {meetings.map((m) => {
+                const dur = durationSeconds(m);
+                return (
+                  <tr key={m.id}>
+                    <td>
+                      <Link to={`/meetings/${m.id}`}>
+                        <strong>{m.title}</strong>
+                      </Link>
+                      <span style={{ marginInlineStart: 8 }}>
+                        <ConfidentialBadge sensitivity={m.sensitivity} />{" "}
+                        <LocalOnlyBadge allowCloud={m.allow_cloud} />
+                      </span>
+                      {m.series_id !== null && (
+                        <div className="muted small">
+                          🔁 {seriesTitle.get(m.series_id) ?? `سری ${d(m.series_id)}`}
+                        </div>
+                      )}
+                    </td>
+                    <td className="muted">
+                      {d(formatJalali(new Date(m.started_at ?? m.created_at)))}
+                    </td>
+                    <td className="muted">{dur !== null ? d(formatDurationFa(dur)) : "—"}</td>
+                    <td>
+                      <CaptureModeBadge mode={m.capture_mode} />
+                    </td>
+                    <td>
+                      <MeetingStatusBadge status={m.status} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </>
   );

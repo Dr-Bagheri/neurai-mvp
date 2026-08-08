@@ -3,7 +3,7 @@
   "info": {
     "title": "NeurAI",
     "description": "Persian-first, offline-capable meeting intelligence server",
-    "version": "0.1.0"
+    "version": "0.1.8"
   },
   "paths": {
     "/api/auth/status": {
@@ -339,7 +339,7 @@
           "meetings"
         ],
         "summary": "Delete Meeting",
-        "description": "True deletion (D4): removes the transcript, audio, embeddings, and\nsearch-index entries together — not just the DB row.",
+        "description": "True deletion (D4), owner-scoped.",
         "operationId": "delete_meeting_api_meetings__meeting_id__delete",
         "parameters": [
           {
@@ -421,6 +421,294 @@
         ],
         "summary": "Stop Meeting",
         "operationId": "stop_meeting_api_meetings__meeting_id__stop_post",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Meeting Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/meetings/{meeting_id}/cloud-transcribe": {
+      "put": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Set Cloud Transcribe",
+        "description": "D15 per-meeting «رونویسی ابری» opt-in — pre-meeting only, and enabling\nrequires the server to be in online mode (re-checked again at job run).",
+        "operationId": "set_cloud_transcribe_api_meetings__meeting_id__cloud_transcribe_put",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Meeting Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudTranscribeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/meetings/{meeting_id}/mics": {
+      "get": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "List Mics",
+        "operationId": "list_mics_api_meetings__meeting_id__mics_get",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Meeting Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Add Mic",
+        "description": "Register a named mic — allowed before and during the meeting.",
+        "operationId": "add_mic_api_meetings__meeting_id__mics_post",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Meeting Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MicCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/meetings/{meeting_id}/mics/{mic_id}": {
+      "patch": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Rename Mic",
+        "operationId": "rename_mic_api_meetings__meeting_id__mics__mic_id__patch",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Meeting Id"
+            }
+          },
+          {
+            "name": "mic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Mic Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MicRename"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Remove Mic",
+        "description": "Remove a registered mic. Refused once it has recorded audio — the\nrecording (and its transcript attribution) must not silently vanish.",
+        "operationId": "remove_mic_api_meetings__meeting_id__mics__mic_id__delete",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Meeting Id"
+            }
+          },
+          {
+            "name": "mic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Mic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/meetings/{meeting_id}/progress": {
+      "get": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Get Progress",
+        "description": "Meeting-page polling contract: status 'processing' + live percent\nuntil 'done'.",
+        "operationId": "get_progress_api_meetings__meeting_id__progress_get",
         "parameters": [
           {
             "name": "meeting_id",
@@ -566,6 +854,22 @@
             "schema": {
               "type": "integer",
               "title": "Meeting Id"
+            }
+          },
+          {
+            "name": "mic_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mic Id"
             }
           }
         ],
@@ -1056,6 +1360,47 @@
         }
       }
     },
+    "/api/chats/{chat_id}/cancel": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Cancel Generation",
+        "description": "Stop button (D5): aborts the in-flight LLM request for this chat.",
+        "operationId": "cancel_generation_api_chats__chat_id__cancel_post",
+        "parameters": [
+          {
+            "name": "chat_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Chat Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/chats/{chat_id}/confirm": {
       "post": {
         "tags": [
@@ -1344,6 +1689,7 @@
           "documents"
         ],
         "summary": "Delete Document",
+        "description": "Owner-scoped via the shared core (admins may delete any — D12-chained\nthere when crossing owners).",
         "operationId": "delete_document_api_documents__doc_id__delete",
         "parameters": [
           {
@@ -1473,6 +1819,104 @@
         }
       }
     },
+    "/api/admin/mode": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Mode",
+        "description": "D15: {mode, online_available} — the UI disables the Online button when\nthe internet is unreachable; air-gapped has no online option at all.",
+        "operationId": "get_mode_api_admin_mode_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Set Mode",
+        "description": "Switch offline/online. Going online is probe-gated (D15) and every\nchange is D12-chained via the shared settings path.",
+        "operationId": "set_mode_api_admin_mode_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModeUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/cloud-status": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Cloud Status",
+        "description": "Booleans only — the UI renders enabled/disabled cloud buttons off this;\nsecret values never leave the store.",
+        "operationId": "cloud_status_api_admin_cloud_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/backup": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Trigger Backup",
+        "description": "Manual snapshot backup to Supabase storage (D4: backup, not sync).\nGuards live in the shared core (air-gapped hard-disabled).",
+        "operationId": "trigger_backup_api_admin_backup_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/status": {
       "get": {
         "tags": [
@@ -1582,6 +2026,148 @@
         ],
         "summary": "List Users",
         "operationId": "list_users_api_admin_users_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/meetings": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List All Meetings",
+        "description": "Archive view across all users (admin role).",
+        "operationId": "list_all_meetings_api_admin_meetings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/meetings/{meeting_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Admin Remove Meeting",
+        "description": "Admin-scoped removal (any owner). True deletion (D4) + D12 chain, via\nthe shared core (platform_ops) the delete_meeting skill also calls.",
+        "operationId": "admin_remove_meeting_api_admin_meetings__meeting_id__delete",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Meeting Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/audit-file": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Read Audit File",
+        "description": "The hash-chained admin audit log (D12). Read-only — no API modifies it.",
+        "operationId": "read_audit_file_api_admin_audit_file_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/audit-file/verify": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Verify Audit File",
+        "operationId": "verify_audit_file_api_admin_audit_file_verify_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Cloud Readiness",
+        "description": "cloud_ready = the harness COULD route to cloud for a consented request\n(profile allows it, admin enabled it, a key is configured). Reachability\nis not probed here — the harness degrades to local at request time anyway.",
+        "operationId": "cloud_readiness_api_cloud_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1750,6 +2336,19 @@
         "type": "object",
         "title": "ChatCreate"
       },
+      "CloudTranscribeBody": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "CloudTranscribeBody"
+      },
       "ConfirmIn": {
         "properties": {
           "skill": {
@@ -1855,6 +2454,11 @@
             "pattern": "^(normal|confidential)$",
             "title": "Sensitivity",
             "default": "normal"
+          },
+          "cloud_transcribe": {
+            "type": "boolean",
+            "title": "Cloud Transcribe",
+            "default": false
           }
         },
         "type": "object",
@@ -1892,6 +2496,10 @@
           "sensitivity": {
             "type": "string",
             "title": "Sensitivity"
+          },
+          "cloud_transcribe": {
+            "type": "boolean",
+            "title": "Cloud Transcribe"
           },
           "series_id": {
             "anyOf": [
@@ -1940,6 +2548,7 @@
           "language",
           "allow_cloud",
           "sensitivity",
+          "cloud_transcribe",
           "series_id",
           "started_at",
           "ended_at",
@@ -1966,6 +2575,50 @@
           "content"
         ],
         "title": "MessageIn"
+      },
+      "MicCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "MicCreate"
+      },
+      "MicRename": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "MicRename"
+      },
+      "ModeUpdate": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "pattern": "^(offline|online)$",
+            "title": "Mode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "ModeUpdate"
       },
       "NoteCreate": {
         "properties": {
@@ -2140,16 +2793,17 @@
             ],
             "title": "Connectivity Profile"
           },
-          "cloud_enabled": {
+          "server_mode": {
             "anyOf": [
               {
-                "type": "boolean"
+                "type": "string",
+                "pattern": "^(offline|online)$"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Cloud Enabled"
+            "title": "Server Mode"
           },
           "openrouter_key": {
             "anyOf": [
@@ -2162,6 +2816,50 @@
             ],
             "title": "Openrouter Key"
           },
+          "supabase_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supabase Url"
+          },
+          "supabase_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supabase Key"
+          },
+          "cloud_asr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Asr Url"
+          },
+          "cloud_asr_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Asr Key"
+          },
           "cloud_chat_model": {
             "anyOf": [
               {
@@ -2172,6 +2870,28 @@
               }
             ],
             "title": "Cloud Chat Model"
+          },
+          "cloud_heavy_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Heavy Model"
+          },
+          "cloud_asr_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Asr Model"
           },
           "local_chat_model": {
             "anyOf": [

@@ -23,6 +23,21 @@ from .chunking import SINGLE_SHOT_LIMIT, map_reduce
 # Tasks that benefit from a frontier model when consent allows it.
 CLOUD_WORTHY_TASKS = {"summarize", "chat_agent", "minutes", "formalize", "merge_notes", "translate"}
 
+# D15 per-task routing: the heavy family (summaries/action items/minutes)
+# rides cloud_heavy_model; everything else cloud-worthy rides cloud_chat_model.
+HEAVY_TASKS = {"summarize", "minutes", "merge_notes"}
+
+
+def _cloud_model_for(task: str) -> str:
+    from neurai.config import get_config
+    from neurai.db import get_db
+
+    cfg = get_config()
+    db = get_db()
+    if task in HEAVY_TASKS:
+        return db.get_setting("cloud_heavy_model") or cfg.cloud_heavy_model
+    return db.get_setting("cloud_chat_model") or cfg.cloud_chat_model
+
 MAX_TOOL_ITERATIONS = 6
 
 # Executes a validated tool call; wired to the Skill Runtime at startup so the
@@ -77,7 +92,12 @@ class Harness:
         """Returns (reply, source, fell_back)."""
         if self._use_cloud(task, constraints):
             try:
-                backend = self._cloud_factory()
+                # D15: pick the frontier model by task family; stub factories
+                # in tests may not accept the kwarg
+                try:
+                    backend = self._cloud_factory(model=_cloud_model_for(task))
+                except TypeError:
+                    backend = self._cloud_factory()
                 reply = await backend.chat(messages, tools=tools)
                 return reply, "cloud", False
             except BackendError:
@@ -193,11 +213,14 @@ class Harness:
                     text=reply.text, source=source, model=model,
                     fell_back=any_fallback, tool_trace=trace,
                 )
+            # provider-neutral turns — each backend converts to its own wire
+            # format (_wire_messages), so a mid-loop cloud→local fallback
+            # never sends a history shaped for the other provider
             history.append({
                 "role": "assistant",
                 "content": reply.text,
                 "tool_calls": [
-                    {"function": {"name": tc.name, "arguments": tc.arguments}}
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                     for tc in reply.tool_calls
                 ],
             })
@@ -207,6 +230,8 @@ class Harness:
                 import json as _json
                 history.append({
                     "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": tc.name,
                     "content": _json.dumps(result, ensure_ascii=False),
                 })
 

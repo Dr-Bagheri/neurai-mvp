@@ -34,7 +34,7 @@ def app_env(tmp_path, monkeypatch):
     harness_mod.set_harness(None)
     skills_mod.set_skill_runtime(None)
     emb_mod.set_embeddings(None)
-    asr_mod.set_engines(None, None)
+    asr_mod.set_engine(None)
     session_mod._manager = None
     queue_mod._queue = None
     conn_mod.reset_probe_cache()

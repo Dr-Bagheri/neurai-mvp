@@ -366,6 +366,12 @@ textarea.input { resize: vertical; min-height: 90px; }
   flex-direction: column;
   height: calc(100vh - 130px);
 }
+.chat-wrap.compact {
+  height: 100%;
+  font-size: 0.88rem;
+}
+.chat-wrap.compact .bubble { padding: 7px 12px; border-radius: 10px; }
+.chat-wrap.compact .msg { max-width: none; }
 .chat-scroll {
   flex: 1;
   overflow-y: auto;
@@ -417,6 +423,11 @@ textarea.input { resize: vertical; min-height: 90px; }
   padding: 12px 16px;
   margin-top: 10px;
 }
+.confirm-box.destructive {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.confirm-box.destructive strong { color: var(--danger); }
 
 .typing { display: inline-flex; gap: 4px; padding: 6px 2px; }
 .typing i {
@@ -455,7 +466,16 @@ textarea.input { resize: vertical; min-height: 90px; }
   overflow: hidden;
   direction: ltr;
 }
-.progress .fill { height: 100%; background: var(--accent); }
+.progress .fill { height: 100%; background: var(--accent); transition: width 0.6s; }
+/* unknown percent (older server): sweeping bar */
+.progress.indeterminate .fill {
+  width: 30%;
+  animation: sweep 1.4s ease-in-out infinite;
+}
+@keyframes sweep {
+  0% { margin-inline-start: -30%; }
+  100% { margin-inline-start: 100%; }
+}
 
 .kbd {
   border: 1px solid var(--border);
@@ -471,3 +491,69 @@ textarea.input { resize: vertical; min-height: 90px; }
   color: var(--text-2);
   padding: 40px 0;
 }
+
+/* ---------- persistent assistant panel (physical-left dock) ---------- */
+
+.assistant-panel {
+  width: 440px; /* v0.3: substantially wider — the assistant is a primary surface */
+  flex-shrink: 0;
+  background: var(--surface);
+  /* docked at the physical left; in RTL its inline-START (physical right)
+     edge meets the main content — the divider goes there */
+  border-inline-start: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.assistant-panel.collapsed {
+  width: 44px;
+  align-items: center;
+  padding-top: 12px;
+  gap: 10px;
+}
+.assistant-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.assistant-body {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.assistant-body .chat-wrap { flex: 1; min-height: 0; }
+
+@media (max-width: 1400px) {
+  .assistant-panel { width: 360px; }
+}
+@media (max-width: 1100px) {
+  .assistant-panel { width: 300px; }
+}
+
+.topbar-search { flex: 1; max-width: 420px; }
+.topbar-search .input { padding: 6px 12px; }
+
+/* ---------- modal (typed destructive confirmation) ---------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 12, 16, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+.modal {
+  width: min(440px, 92vw);
+  background: var(--surface);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  padding: 20px;
+}
+.modal h3 { color: var(--danger); }

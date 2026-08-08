@@ -1,11 +1,13 @@
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useState, type FormEvent } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useApp } from "../state/AppContext";
+import { AssistantPanel } from "./AssistantPanel";
 
+// v0.3 menu: one Meetings entry (live controls + records merged), search in
+// the top bar, assistant only as the left panel, Logs consolidating the
+// queue + audit views.
 const NAV = [
   { to: "/", icon: "🗓️", label: "جلسه‌ها" },
-  { to: "/live", icon: "🎙️", label: "جلسهٔ زنده" },
-  { to: "/chat", icon: "💬", label: "دستیار" },
-  { to: "/search", icon: "🔎", label: "جستجو" },
   { to: "/actions", icon: "✅", label: "کارها" },
   { to: "/documents", icon: "📄", label: "اسناد" },
   { to: "/settings", icon: "⚙️", label: "تنظیمات" },
@@ -13,21 +15,31 @@ const NAV = [
 
 const TITLES: Record<string, string> = {
   "/": "جلسه‌ها",
-  "/live": "جلسهٔ زنده",
-  "/chat": "دستیار هوشمند",
-  "/search": "جستجو در همهٔ جلسه‌ها",
+  "/chat": "بایگانی گفتگو با دستیار",
+  "/search": "نتایج جستجو",
   "/actions": "پیگیری کارها",
   "/documents": "اسناد و پرسش‌وپاسخ",
+  "/logs": "گزارش‌ها",
   "/settings": "تنظیمات",
   "/admin": "مدیریت سرور",
 };
 
 export function Layout() {
-  const { user, status, logout, settings, setSettings } = useApp();
+  const { user, adminStatus, logout, settings, setSettings } = useApp();
   const location = useLocation();
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+
   const title =
     TITLES[location.pathname] ??
     (location.pathname.startsWith("/meetings/") ? "جزئیات جلسه" : "NeurAI");
+
+  const submitSearch = (e: FormEvent) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+    navigate(`/search?q=${encodeURIComponent(query.trim())}`);
+    setQuery("");
+  };
 
   return (
     <div className="shell">
@@ -48,20 +60,29 @@ export function Layout() {
           </NavLink>
         ))}
         {user?.is_admin && (
-          <NavLink
-            to="/admin"
-            className={({ isActive }) => "nav-link" + (isActive ? " active" : "")}
-          >
-            <span className="icon">🛠️</span>
-            مدیریت سرور
-          </NavLink>
+          <>
+            <NavLink
+              to="/logs"
+              className={({ isActive }) => "nav-link" + (isActive ? " active" : "")}
+            >
+              <span className="icon">📜</span>
+              گزارش‌ها
+            </NavLink>
+            <NavLink
+              to="/admin"
+              className={({ isActive }) => "nav-link" + (isActive ? " active" : "")}
+            >
+              <span className="icon">🛠️</span>
+              مدیریت سرور
+            </NavLink>
+          </>
         )}
         <div className="spacer" />
         <div className="nav-link" style={{ cursor: "default" }}>
           <span className="icon">👤</span>
           <span className="small">{user?.display_name}</span>
         </div>
-        <button className="btn sm" onClick={logout}>
+        <button className="btn sm" onClick={() => void logout()}>
           خروج
         </button>
       </aside>
@@ -69,21 +90,27 @@ export function Layout() {
       <div className="main">
         <header className="topbar">
           <div className="title">{title}</div>
+          <form className="topbar-search" onSubmit={submitSearch}>
+            <input
+              className="input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="🔎 جستجو در جلسه‌ها و اسناد…"
+            />
+          </form>
           <div className="controls">
-            {status &&
-              (status.profile === "air_gapped" ? (
+            {adminStatus &&
+              (adminStatus.profile === "air_gapped" ? (
                 <span className="badge warn" title="حالت ایزوله: هیچ مسیر ابری فعال نیست">
-                  ⛔ ایزوله (Air-gapped)
+                  ⛔ ایزوله
                 </span>
-              ) : status.online ? (
-                <span className="badge ok">🌐 آنلاین</span>
+              ) : adminStatus.cloud_allowed ? (
+                <span className="badge cloud">☁️ ابر فعال</span>
               ) : (
-                <span className="badge plain">🔌 آفلاین — همه‌چیز محلی</span>
+                <span className="badge local">🏠 فقط مدل محلی</span>
               ))}
-            {status && !status.cloud_enabled_workspace && status.profile !== "air_gapped" && (
-              <span className="badge local" title="مدل ابری برای این فضای کاری فعال نشده">
-                🏠 فقط مدل محلی
-              </span>
+            {adminStatus?.live_meeting_active && (
+              <span className="badge danger">● در حال ضبط</span>
             )}
             <button
               className="btn sm"
@@ -100,6 +127,10 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
+
+      {/* Persistent assistant — docked at the physical LEFT edge; hidden only
+          on the /chat archive page (the page itself is the full surface). */}
+      {location.pathname !== "/chat" && <AssistantPanel />}
     </div>
   );
 }

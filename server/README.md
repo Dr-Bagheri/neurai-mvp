@@ -13,7 +13,7 @@ neurai/
 ├── db/            # SQLite (WAL) schema + access layer — per-user scoping everywhere
 ├── auth/          # local accounts, argon2id hashes, session cookies
 ├── api/           # REST + WebSocket routers (meetings, chat, documents, admin, …)
-├── audio/         # live sessions, two-pass ASR (pluggable engines), VAD, diarization
+├── audio/         # live recording sessions, GPU quality pass w/ progress, diarization
 ├── harness/       # complete(): local/cloud routing, consent gate, fallback, map-reduce
 ├── skills/        # Skill Runtime (ACL, manifests, confirmation gate, audit) + intent router
 ├── rag/           # embeddings (Ollama BGE-M3), owner-scoped vector search, indexing
@@ -43,12 +43,22 @@ uses, network-blocked). With real models:
 - **ASR:** `pip install -e .[asr]` (faster-whisper); models auto-download on
   first use, or pre-place them for air-gapped installs.
 - **LLM + embeddings:** install [Ollama](https://ollama.com), then
-  `ollama pull qwen3:8b` and `ollama pull bge-m3`.
+  `ollama pull qwen3.5:4b` and `ollama pull bge-m3` (D14).
+- **Diarization (optional):** `pip install -e .[diarization]` (pyannote 3.1,
+  pinned <4) + `NEURAI_HF_TOKEN` for the gated model; without it the quality
+  pass skips diarization gracefully.
 - **Word export:** `pip install -e .[export]` (python-docx).
 
 Key env vars (see `neurai/config.py` for all): `NEURAI_DATA_DIR`,
 `NEURAI_PORT`, `NEURAI_PROFILE` (`auto`|`air_gapped`), `NEURAI_OLLAMA_URL`,
-`NEURAI_LOCAL_MODEL`, `NEURAI_ASR_LIVE_MODEL`, `NEURAI_ASR_QUALITY_MODEL`.
+`NEURAI_LOCAL_MODEL`, `NEURAI_ASR_QUALITY_MODEL`, `NEURAI_ASR_MODEL_DIR`
+(an alternate local CTranslate2 model dir — the D14 Persian-turbo bake-off
+hook), `NEURAI_HF_TOKEN`, `NEURAI_OLLAMA_TIMEOUT` (default 600 s),
+`NEURAI_OLLAMA_KEEP_ALIVE` (default `30m`), `NEURAI_OLLAMA_THINK`
+(the installer sets `false` for qwen3.5 — D14 think-false).
+
+Offline hygiene (D9): cached Whisper models load with `local_files_only`
+first, so an air-gapped server never pings HuggingFace for revision checks.
 
 Cloud (OpenRouter) is **off** until an admin enables it via
 `PUT /api/admin/settings` *and* a meeting/chat opts in (`allow_cloud`) — D3.
@@ -94,12 +104,72 @@ gate on side-effectful skills, and the append-only audit log.
   exports, and embeddings/search entries together.
 - Per-meeting **sensitivity**: «محرمانه» meetings are forced local-only and
   excluded from cross-meeting indexing.
+- **Tamper-evident admin audit (D12):** destructive/security-relevant admin
+  actions (archive removal via `GET/DELETE /api/admin/meetings[/{id}]`,
+  profile/key changes) append to a hash-chained JSONL file
+  (`admin-audit.jsonl`; records `{ts, actor, action, details, prev_hash,
+  hash}` with `hash = SHA256(prev_hash ‖ canonical_json)` and a random
+  genesis anchor); `GET /api/admin/audit-file` reads it and
+  `GET /api/admin/audit-file/verify` walks the chain and reports the first
+  broken line. No API can modify it.
+- **Grounded generation (D5):** meeting skills refuse to summarize an empty
+  or trivial transcript (honest Persian answer, no LLM call) and every
+  generation prompt carries an explicit anti-fabrication clause.
+- **Stop button (D5):** `POST /api/chats/{id}/cancel` aborts the in-flight
+  Ollama/OpenRouter request (CPU freed); the message POST returns
+  `type: "stopped"` and the chat stores «⏹ تولید پاسخ متوقف شد.».
+- **Compute (D13 v0.3):** GPU-first, one behavior, no setting — ASR loads
+  on CUDA with a forced-initialization probe and falls back to CPU silently
+  on any load failure (logged, never fatal).
+- **Platform-control skills (D7 amendment):** the assistant can administer
+  the platform through chat («این جلسه رو حذف کن», «دستگاه پردازش رو بذار روی
+  GPU») — only via the Skill Runtime: admin manifests enforced in the runtime
+  (denial is shaped like "unknown skill", not probeable), every mutating
+  skill behind the rule-2 confirmation card, and all operations go through
+  `neurai/platform_ops.py` — the same core the REST admin API calls, so D12
+  chain logging happens in one shared path. Skills: get_status,
+  delete_meeting, delete_document, set_setting, trigger_backup.
+- **Snapshot backup (D4):** `POST /api/admin/backup` uploads a SQLCipher
+  snapshot (ciphertext; key never leaves the server) to Supabase storage
+  (bucket `neurai-backups`). Requires `supabase_url`/`supabase_key` in the
+  secret store; hard-disabled under the air-gapped profile.
+- **Write-only cloud credentials:** `GET /api/admin/cloud-status` returns
+  `openrouter_configured`/`supabase_configured` booleans only — credential
+  values are never returned by any endpoint.
+
+## Online mode (D15)
+
+- **One admin switch:** `PUT /api/admin/mode` (`offline` | `online`). Default
+  offline; going online is **probe-gated** (rejected without reachable
+  internet) and every change is D12-chained via the shared settings path.
+  The air-gapped profile removes the online option entirely.
+- **Per-task cloud routing** (all via OpenRouter, admin-overridable):
+  `cloud_chat_model` (default `anthropic/claude-sonnet-5`) for chat/skills/
+  translation; `cloud_heavy_model` (default `anthropic/claude-opus-5`) for
+  summaries/action items/صورتجلسه. Retrieval/embeddings stay local always.
+- **Consent-gated cloud ASR (§2.1-3 [REVISED v0.3-online]):** an
+  OpenAI-compatible `/audio/transcriptions` provider (secrets
+  `cloud_asr_url`/`cloud_asr_key`, model `cloud_asr_model`; default Groq
+  `whisper-large-v3-turbo`). Used ONLY when the server is online AND the
+  meeting has an explicit per-meeting «رونویسی ابری» opt-in; every use is
+  D12-chained; cloud failure falls back to the local GPU pass (never a lost
+  transcript). **«محرمانه» meetings refuse cloud transcription even with
+  consent — D4 sensitivity is absolute.**
+
+## v0.3 pipeline (D2/D13/D14 revised)
+
+- **No live captions:** during a meeting the server only records (encrypted,
+  crash-safe). The quality pass auto-queues at meeting end and reports
+  **percent progress** (`GET /api/meetings/{id}/progress`; jobs.progress).
+- **Named multi-mic:** register mics per meeting (`/api/meetings/{id}/mics`),
+  each WS audio stream binds to a mic id, and the user-chosen name flows to
+  speaker labels. Single-room-mic meetings get diarizer labels instead.
+- **Models (D14):** faster-whisper large-v3 int8 GPU (Persian-turbo bake-off
+  via `NEURAI_ASR_MODEL_DIR`), pyannote 3.1 (optional extra, after ASR),
+  qwen3.5:4b think-false, bge-m3.
 
 ## Deliberately not here yet
 
-- Real diarization/speaker-ID backends (interface in `audio/diarization.py`;
-  3D-Speaker is the week-0 candidate) — everything downstream works via the
-  `S1` default + manual relabel.
-- Silero VAD (energy endpointer in `audio/vad.py` drives the live loop for now).
-- Encrypted Supabase snapshot backup (MVP+1, D4).
+- Speaker identification (enrollment round / voice profiles) — diarizer
+  labels + manual relabel cover room mode today.
 - Windows service installer + HTTPS cert generation (Phase 4).

@@ -1,17 +1,25 @@
 import { useState, type FormEvent } from "react";
+import { ApiError } from "../api/client";
 import { useApp } from "../state/AppContext";
 
 export function LoginPage() {
   const { login } = useApp();
-  const [username, setUsername] = useState("sara");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!username.trim()) return;
+    if (!username.trim() || !password) return;
     setBusy(true);
-    await login(username.trim(), password);
+    setError("");
+    try {
+      await login(username.trim(), password);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "اتصال به سرور برقرار نشد");
+      setBusy(false);
+    }
   };
 
   return (
@@ -40,15 +48,20 @@ export function LoginPage() {
           onChange={(e) => setPassword(e.target.value)}
           style={{ marginBottom: 16 }}
         />
-        <button className="btn primary" style={{ width: "100%" }} disabled={busy}>
+        {error && (
+          <p className="badge danger" style={{ marginBottom: 12 }}>
+            {error}
+          </p>
+        )}
+        <button
+          className="btn primary"
+          style={{ width: "100%" }}
+          disabled={busy || !username.trim() || !password}
+        >
           {busy ? "در حال ورود…" : "ورود"}
         </button>
         <p className="muted small" style={{ marginTop: 14, marginBottom: 0 }}>
           حساب‌ها محلی و روی سرور دفتر شما هستند؛ هیچ داده‌ای به اینترنت ارسال نمی‌شود.
-          <br />
-          <span className="badge plain" style={{ marginTop: 6 }}>
-            نسخهٔ نمایشی — با هر گذرواژه‌ای وارد شوید
-          </span>
         </p>
       </form>
     </div>

@@ -53,7 +53,8 @@ def test_chat_intent_tier_summarizes_with_provenance(client):
     db = get_db()
     db.insert(
         "INSERT INTO transcript_segments(meeting_id, pass, start_ms, end_ms, text) "
-        "VALUES(?, 'quality', 0, 5000, 'بودجه پروژه تصویب شد')",
+        "VALUES(?, 'quality', 0, 5000, "
+        "'بودجه پروژه تصویب شد و قرار شد تیم فنی تا پایان ماه گزارش پیشرفت را ارائه کند')",
         (meeting_id,),
     )
 

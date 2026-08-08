@@ -65,10 +65,13 @@ _TEMPLATE_PROMPTS = {
 
 async def build_minutes_body(meeting_id: int, allow_cloud: bool, template: str) -> tuple[str, str]:
     """Returns (body_markdown, source)."""
+    from neurai.skills.builtin import GROUNDING_FA, NO_TRANSCRIPT_FA, _MIN_TRANSCRIPT_CHARS
+
     text = transcript_text(meeting_id)
-    if not text:
-        raise RuntimeError("رونوشتی برای این جلسه موجود نیست")
-    prompt = _TEMPLATE_PROMPTS.get(template, _TEMPLATE_PROMPTS["plain"])
+    if len(text.strip()) < _MIN_TRANSCRIPT_CHARS:
+        # grounding (D5): no LLM call on an empty/trivial transcript
+        raise RuntimeError(NO_TRANSCRIPT_FA)
+    prompt = _TEMPLATE_PROMPTS.get(template, _TEMPLATE_PROMPTS["plain"]) + GROUNDING_FA
     result = await get_harness().summarize_long(
         "minutes", prompt, text, Constraints(allow_cloud=allow_cloud),
     )

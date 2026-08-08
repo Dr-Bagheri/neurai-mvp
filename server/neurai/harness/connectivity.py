@@ -19,7 +19,7 @@ from neurai.config import get_config
 from neurai.db import get_db
 
 PROFILE_KEY = "connectivity_profile"       # air_gapped | auto
-CLOUD_ENABLED_KEY = "cloud_enabled"        # "1" once the admin turns cloud on
+SERVER_MODE_KEY = "server_mode"            # offline | online (D15, default offline)
 
 _PROBE_CACHE: dict[str, tuple[float, bool]] = {}
 _PROBE_TTL_S = 30.0
@@ -30,23 +30,27 @@ def get_profile() -> str:
     return db.get_setting(PROFILE_KEY) or get_config().connectivity_profile
 
 
-def cloud_enabled_globally() -> bool:
-    return get_db().get_setting(CLOUD_ENABLED_KEY, "0") == "1"
+def get_server_mode() -> str:
+    """D15: the ONE admin-facing switch. Air-gapped is locked offline."""
+    if get_profile() == "air_gapped":
+        return "offline"
+    return get_db().get_setting(SERVER_MODE_KEY, "offline") or "offline"
+
+
+def is_online_mode() -> bool:
+    return get_server_mode() == "online"
 
 
 def cloud_allowed() -> bool:
-    """Profile + admin switch. This gate runs before any network code."""
+    """Profile + server mode — the single source of truth for the harness
+    gate (D15 replaced the old cloud_enabled toggle; migration 004 mapped
+    stored intent). This runs before any network code."""
     if get_profile() == "air_gapped":
         return False
-    return cloud_enabled_globally()
+    return is_online_mode()
 
 
-def probe_cloud(url: str | None = None, timeout: float = 3.0) -> bool:
-    """Reachability probe, cached. Never called under air_gapped."""
-    if not cloud_allowed():
-        return False
-    cfg = get_config()
-    target = url or cfg.openrouter_url
+def _probe(target: str, timeout: float = 3.0) -> bool:
     now = time.monotonic()
     cached = _PROBE_CACHE.get(target)
     if cached and now - cached[0] < _PROBE_TTL_S:
@@ -59,6 +63,23 @@ def probe_cloud(url: str | None = None, timeout: float = 3.0) -> bool:
         ok = False
     _PROBE_CACHE[target] = (now, ok)
     return ok
+
+
+def probe_internet(url: str | None = None, timeout: float = 3.0) -> bool:
+    """Raw reachability (D15 mode gate + the UI's online_available flag).
+    NOT gated on the current mode — you must be able to probe while offline
+    to know whether Online can be offered. Air-gapped never probes."""
+    if get_profile() == "air_gapped":
+        return False
+    return _probe(url or get_config().openrouter_url, timeout)
+
+
+def probe_cloud(url: str | None = None, timeout: float = 3.0) -> bool:
+    """Reachability probe for the harness gate: policy first, then network.
+    Never called under air_gapped."""
+    if not cloud_allowed():
+        return False
+    return _probe(url or get_config().openrouter_url, timeout)
 
 
 def reset_probe_cache() -> None:

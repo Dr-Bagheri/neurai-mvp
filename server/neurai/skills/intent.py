@@ -62,11 +62,34 @@ _OPEN_ACTIONS = re.compile(r"(اقدام|کار|وظیفه)[^.]*باز|چه کا
 _SEARCH = re.compile(r"کجا (گفتیم|بحث|صحبت)|پیدا کن|جستجو|search", re.IGNORECASE)
 _MEETING_WORD = re.compile(r"جلسه|میتینگ|meeting", re.IGNORECASE)
 
+# platform-control phrasings (D7 amendment). These only *propose* the skill;
+# admin enforcement + the rule-2 confirmation card happen in the runtime.
+_DELETE = re.compile(r"حذف|پاک\s?کن|delete", re.IGNORECASE)
+_DEVICE_WORD = re.compile(r"دستگاه|پردازنده|پردازش|device", re.IGNORECASE)
+_DEVICE_CUDA = re.compile(r"\bgpu\b|\bcuda\b|کارت گرافیک|جی[\s‌]?پی[\s‌]?یو", re.IGNORECASE)
+_DEVICE_CPU = re.compile(r"\bcpu\b|سی[\s‌]?پی[\s‌]?یو", re.IGNORECASE)
+_DEVICE_AUTO = re.compile(r"خودکار|اتوماتیک|\bauto\b", re.IGNORECASE)
+_STATUS = re.compile(r"وضعیت\s*(سیستم|سرور|سامانه|پلتفرم)|system status", re.IGNORECASE)
+_BACKUP = re.compile(r"پشتیبان|بکاپ|backup", re.IGNORECASE)
+
 
 def route(text: str, user_id: int) -> Intent | None:
     """Return a direct skill invocation for common asks, else None."""
     t = fa_normalize(text)
 
+    # -- platform control ---------------------------------------------------
+    if _MEETING_WORD.search(t) and _DELETE.search(t):
+        meeting_id = _resolve_meeting(t, user_id)
+        if meeting_id is not None:
+            return Intent("delete_meeting", {"meeting_id": meeting_id})
+
+    if _STATUS.search(t):
+        return Intent("get_status", {})
+
+    if _BACKUP.search(t) and re.search(r"بگیر|کن|انجام|run|take", t, re.IGNORECASE):
+        return Intent("trigger_backup", {})
+
+    # -- meeting intelligence ----------------------------------------------
     if _OPEN_ACTIONS.search(t):
         return Intent("list_open_action_items", {})
 

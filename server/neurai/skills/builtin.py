@@ -42,6 +42,32 @@ def _meeting_constraints(ctx: SkillContext, meeting) -> Constraints:
     return Constraints(allow_cloud=ctx.allow_cloud and bool(meeting["allow_cloud"]))
 
 
+# Grounding (D5 amendment): below this, a "transcript" is too thin to say
+# anything true about the meeting — answer honestly instead of calling the
+# LLM, which would have nothing to work from but its imagination.
+_MIN_TRANSCRIPT_CHARS = 40
+NO_TRANSCRIPT_FA = (
+    "برای این جلسه رونوشتی ثبت نشده است؛ پس از ضبط جلسه و پایان پردازش صدا دوباره تلاش کنید."
+)
+
+
+def grounded_transcript(meeting_id: int) -> str:
+    """Transcript text, or SkillError with an honest message when there is
+    nothing (or trivially little) to ground a generation on — no LLM call."""
+    text = transcript_text(meeting_id)
+    if len(text.strip()) < _MIN_TRANSCRIPT_CHARS:
+        raise SkillError(NO_TRANSCRIPT_FA)
+    return text
+
+
+# Anti-fabrication clause appended to every generation prompt (D5 amendment).
+GROUNDING_FA = (
+    " فقط از محتوای رونوشتِ داده‌شده استفاده کن؛ هیچ نام، تصمیم، تاریخ یا عددی را که در "
+    "رونوشت نیست از خود نساز. اگر اطلاعاتی (مثل مسئول یا مهلت) در رونوشت ذکر نشده، "
+    "به‌جای حدس زدن بنویس «ذکر نشده»."
+)
+
+
 # -- read skills ---------------------------------------------------------------
 
 async def list_meetings(ctx: SkillContext, params: dict[str, Any]) -> dict[str, Any]:
@@ -100,15 +126,13 @@ async def list_open_action_items(ctx: SkillContext, params: dict[str, Any]) -> d
 
 _SUMMARY_PROMPT = (
     "تو دستیار جلسات هستی. از رونوشت جلسه یک خلاصه‌ی ساخت‌یافته به فارسی رسمی بنویس: "
-    "موضوعات اصلی، تصمیم‌ها، و نکات مهم. کوتاه و دقیق."
+    "موضوعات اصلی، تصمیم‌ها، و نکات مهم. کوتاه و دقیق." + GROUNDING_FA
 )
 
 
 async def summarize_meeting(ctx: SkillContext, params: dict[str, Any]) -> dict[str, Any]:
     meeting = _own_meeting(ctx, int(params["meeting_id"]))
-    text = transcript_text(meeting["id"])
-    if not text:
-        raise SkillError("رونوشتی برای این جلسه موجود نیست")
+    text = grounded_transcript(meeting["id"])  # honest no-transcript answer, no LLM call
     result = await get_harness().summarize_long(
         "summarize", _SUMMARY_PROMPT, text, _meeting_constraints(ctx, meeting),
     )
@@ -125,7 +149,8 @@ _ACTION_ITEMS_PROMPT = (
     "از رونوشت جلسه فقط اقدام‌ها (کارهایی که باید انجام شود) را استخراج کن. "
     "خروجی را فقط به صورت JSON آرایه بده: "
     '[{"text": "...", "assignee": "...", "due": null}] '
-    "اگر مسئول یا مهلت مشخص نیست، مقدار را خالی بگذار."
+    "اگر مسئول یا مهلت مشخص نیست، مقدار را خالی بگذار. فقط اقدام‌هایی را بیاور که "
+    "صریحاً در رونوشت آمده‌اند؛ چیزی از خود نساز."
 )
 
 
@@ -144,9 +169,7 @@ def _parse_json_array(text: str) -> list[dict[str, Any]]:
 
 async def extract_action_items(ctx: SkillContext, params: dict[str, Any]) -> dict[str, Any]:
     meeting = _own_meeting(ctx, int(params["meeting_id"]))
-    text = transcript_text(meeting["id"])
-    if not text:
-        raise SkillError("رونوشتی برای این جلسه موجود نیست")
+    text = grounded_transcript(meeting["id"])
     result = await get_harness().summarize_long(
         "summarize", _ACTION_ITEMS_PROMPT, text, _meeting_constraints(ctx, meeting),
         reduce_prompt="فهرست‌های اقدام زیر را ادغام کن و موارد تکراری را حذف کن. فقط JSON آرایه بده.",

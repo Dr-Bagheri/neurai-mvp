@@ -161,8 +161,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Meeting
-         * @description True deletion (D4): removes the transcript, audio, embeddings, and
-         *     search-index entries together — not just the DB row.
+         * @description True deletion (D4), owner-scoped.
          */
         delete: operations["delete_meeting_api_meetings__meeting_id__delete"];
         options?: never;
@@ -198,6 +197,91 @@ export interface paths {
         put?: never;
         /** Stop Meeting */
         post: operations["stop_meeting_api_meetings__meeting_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/meetings/{meeting_id}/cloud-transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Cloud Transcribe
+         * @description D15 per-meeting «رونویسی ابری» opt-in — pre-meeting only, and enabling
+         *     requires the server to be in online mode (re-checked again at job run).
+         */
+        put: operations["set_cloud_transcribe_api_meetings__meeting_id__cloud_transcribe_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/meetings/{meeting_id}/mics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Mics */
+        get: operations["list_mics_api_meetings__meeting_id__mics_get"];
+        put?: never;
+        /**
+         * Add Mic
+         * @description Register a named mic — allowed before and during the meeting.
+         */
+        post: operations["add_mic_api_meetings__meeting_id__mics_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/meetings/{meeting_id}/mics/{mic_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Mic
+         * @description Remove a registered mic. Refused once it has recorded audio — the
+         *     recording (and its transcript attribution) must not silently vanish.
+         */
+        delete: operations["remove_mic_api_meetings__meeting_id__mics__mic_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Mic */
+        patch: operations["rename_mic_api_meetings__meeting_id__mics__mic_id__patch"];
+        trace?: never;
+    };
+    "/api/meetings/{meeting_id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Progress
+         * @description Meeting-page polling contract: status 'processing' + live percent
+         *     until 'done'.
+         */
+        get: operations["get_progress_api_meetings__meeting_id__progress_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -382,6 +466,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chats/{chat_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Generation
+         * @description Stop button (D5): aborts the in-flight LLM request for this chat.
+         */
+        post: operations["cancel_generation_api_chats__chat_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chats/{chat_id}/confirm": {
         parameters: {
             query?: never;
@@ -486,7 +590,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Document */
+        /**
+         * Delete Document
+         * @description Owner-scoped via the shared core (admins may delete any — D12-chained
+         *     there when crossing owners).
+         */
         delete: operations["delete_document_api_documents__doc_id__delete"];
         options?: never;
         head?: never;
@@ -522,6 +630,74 @@ export interface paths {
         /** Update Settings */
         put: operations["update_settings_api_admin_settings_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mode
+         * @description D15: {mode, online_available} — the UI disables the Online button when
+         *     the internet is unreachable; air-gapped has no online option at all.
+         */
+        get: operations["get_mode_api_admin_mode_get"];
+        /**
+         * Set Mode
+         * @description Switch offline/online. Going online is probe-gated (D15) and every
+         *     change is D12-chained via the shared settings path.
+         */
+        put: operations["set_mode_api_admin_mode_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/cloud-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cloud Status
+         * @description Booleans only — the UI renders enabled/disabled cloud buttons off this;
+         *     secret values never leave the store.
+         */
+        get: operations["cloud_status_api_admin_cloud_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Backup
+         * @description Manual snapshot backup to Supabase storage (D4: backup, not sync).
+         *     Guards live in the shared core (air-gapped hard-disabled).
+         */
+        post: operations["trigger_backup_api_admin_backup_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -599,6 +775,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/meetings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List All Meetings
+         * @description Archive view across all users (admin role).
+         */
+        get: operations["list_all_meetings_api_admin_meetings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/meetings/{meeting_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Admin Remove Meeting
+         * @description Admin-scoped removal (any owner). True deletion (D4) + D12 chain, via
+         *     the shared core (platform_ops) the delete_meeting skill also calls.
+         */
+        delete: operations["admin_remove_meeting_api_admin_meetings__meeting_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/audit-file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Audit File
+         * @description The hash-chained admin audit log (D12). Read-only — no API modifies it.
+         */
+        get: operations["read_audit_file_api_admin_audit_file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/audit-file/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Verify Audit File */
+        get: operations["verify_audit_file_api_admin_audit_file_verify_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cloud Readiness
+         * @description cloud_ready = the harness COULD route to cloud for a consented request
+         *     (profile allows it, admin enabled it, a key is configured). Reachability
+         *     is not probed here — the harness degrades to local at request time anyway.
+         */
+        get: operations["cloud_readiness_api_cloud_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -668,6 +944,11 @@ export interface components {
              */
             title: string;
         };
+        /** CloudTranscribeBody */
+        CloudTranscribeBody: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** ConfirmIn */
         ConfirmIn: {
             /** Skill */
@@ -725,6 +1006,11 @@ export interface components {
              * @default normal
              */
             sensitivity: string;
+            /**
+             * Cloud Transcribe
+             * @default false
+             */
+            cloud_transcribe: boolean;
         };
         /** MeetingOut */
         MeetingOut: {
@@ -742,6 +1028,8 @@ export interface components {
             allow_cloud: boolean;
             /** Sensitivity */
             sensitivity: string;
+            /** Cloud Transcribe */
+            cloud_transcribe: boolean;
             /** Series Id */
             series_id: number | null;
             /** Started At */
@@ -760,6 +1048,21 @@ export interface components {
              * @default false
              */
             allow_cloud: boolean;
+        };
+        /** MicCreate */
+        MicCreate: {
+            /** Name */
+            name: string;
+        };
+        /** MicRename */
+        MicRename: {
+            /** Name */
+            name: string;
+        };
+        /** ModeUpdate */
+        ModeUpdate: {
+            /** Mode */
+            mode: string;
         };
         /** NoteCreate */
         NoteCreate: {
@@ -818,12 +1121,24 @@ export interface components {
         SettingsUpdate: {
             /** Connectivity Profile */
             connectivity_profile?: string | null;
-            /** Cloud Enabled */
-            cloud_enabled?: boolean | null;
+            /** Server Mode */
+            server_mode?: string | null;
             /** Openrouter Key */
             openrouter_key?: string | null;
+            /** Supabase Url */
+            supabase_url?: string | null;
+            /** Supabase Key */
+            supabase_key?: string | null;
+            /** Cloud Asr Url */
+            cloud_asr_url?: string | null;
+            /** Cloud Asr Key */
+            cloud_asr_key?: string | null;
             /** Cloud Chat Model */
             cloud_chat_model?: string | null;
+            /** Cloud Heavy Model */
+            cloud_heavy_model?: string | null;
+            /** Cloud Asr Model */
+            cloud_asr_model?: string | null;
             /** Local Chat Model */
             local_chat_model?: string | null;
             /** Embed Model */
@@ -1231,6 +1546,206 @@ export interface operations {
             };
         };
     };
+    set_cloud_transcribe_api_meetings__meeting_id__cloud_transcribe_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meeting_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloudTranscribeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_mics_api_meetings__meeting_id__mics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meeting_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_mic_api_meetings__meeting_id__mics_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meeting_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MicCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_mic_api_meetings__meeting_id__mics__mic_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meeting_id: number;
+                mic_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_mic_api_meetings__meeting_id__mics__mic_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meeting_id: number;
+                mic_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MicRename"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_progress_api_meetings__meeting_id__progress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meeting_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_transcript_api_meetings__meeting_id__transcript_get: {
         parameters: {
             query?: never;
@@ -1299,7 +1814,9 @@ export interface operations {
     };
     get_audio_api_meetings__meeting_id__audio_get: {
         parameters: {
-            query?: never;
+            query?: {
+                mic_id?: number | null;
+            };
             header?: never;
             path: {
                 meeting_id: number;
@@ -1695,6 +2212,37 @@ export interface operations {
             };
         };
     };
+    cancel_generation_api_chats__chat_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     confirm_skill_api_chats__chat_id__confirm_post: {
         parameters: {
             query?: never;
@@ -2030,6 +2578,99 @@ export interface operations {
             };
         };
     };
+    get_mode_api_admin_mode_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    set_mode_api_admin_mode_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModeUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cloud_status_api_admin_cloud_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    trigger_backup_api_admin_backup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     system_status_api_admin_status_get: {
         parameters: {
             query?: never;
@@ -2113,6 +2754,128 @@ export interface operations {
         };
     };
     list_users_api_admin_users_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_all_meetings_api_admin_meetings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    admin_remove_meeting_api_admin_meetings__meeting_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meeting_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_audit_file_api_admin_audit_file_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_audit_file_api_admin_audit_file_verify_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    cloud_readiness_api_cloud_get: {
         parameters: {
             query?: never;
             header?: never;
