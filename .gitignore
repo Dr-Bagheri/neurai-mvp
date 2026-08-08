@@ -1,6 +1,9 @@
 # Local-only documents (kept out of the repo by choice)
 docs/*.docx
 
+# Local-only Windows install pack (D10 packaging layer; never published)
+installer/
+
 # Python
 __pycache__/
 *.py[cod]
