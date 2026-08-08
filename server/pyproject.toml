@@ -34,6 +34,11 @@ neurai-server = "neurai.main:run"
 [tool.setuptools.packages.find]
 include = ["neurai*"]
 
+[tool.setuptools.package-data]
+# The migration SQL files must ship in the wheel — a fresh install has no
+# tables without them (D4: numbered migrations are the only schema source).
+neurai = ["db/migrations/*.sql"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
