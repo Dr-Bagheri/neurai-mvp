@@ -14,7 +14,7 @@ npm run build    # type-check + production bundle in dist/
 
 ## Current state: UI complete, engine mocked
 
-The server does not exist yet, so the UI runs against an in-browser mock engine:
+The server engine now exists (`server/`, OpenAPI exported to `openapi.json`), but the UI still runs against an in-browser mock engine — wiring `client.ts` to real `fetch` is the next step:
 
 - `src/api/types.ts` — mirrors the future FastAPI/Pydantic schema (snake_case fields).
   Once the server exists these types are replaced by `openapi-typescript` output (D6).
@@ -23,7 +23,7 @@ The server does not exist yet, so the UI runs against an in-browser mock engine:
 - `src/api/mock.ts` — demo data (Persian meetings, transcripts, action items, audit log)
   and canned skill-driven chat answers.
 
-`vite.config.ts` already proxies `/api` and `/ws` to `127.0.0.1:8321` for when the engine
+`vite.config.ts` already proxies `/api` and `/ws` to `127.0.0.1:8471` for when the engine
 arrives.
 
 ## What's implemented

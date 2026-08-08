@@ -67,6 +67,9 @@ async def search_chunks(
     kind: str | None = None,
 ) -> list[ChunkHit]:
     """Owner-scoped semantic search. Retrieval is always local (§2.1)."""
+    from neurai.fa import fa_normalize
+
+    query = fa_normalize(query)  # D5: queries normalize like indexed text
     db = get_db()
     sql = "SELECT id, kind, ref_id, seq, text, embedding, embed_model FROM rag_chunks WHERE owner_id=?"
     params: list = [owner_id]

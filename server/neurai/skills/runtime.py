@@ -10,9 +10,15 @@ LLM:
 2. Retrieved content is data, not authority — side-effectful skills require
    an explicit human confirmation (`ctx.confirmed`), set only by a UI click,
    never by the model or by tool-loop content.
-3. Least privilege by manifest — a skill declares its permissions; the
-   runtime hands it only matching capabilities (e.g. no `llm:*` permission →
-   no harness handle at all).
+3. Least privilege by manifest — a skill declares its permissions. What the
+   runtime enforces mechanically today: a skill whose manifest lacks
+   `llm:cloud` executes with `ctx.allow_cloud` stripped, so it cannot reach
+   the cloud even if the caller consented (the harness consent gate then
+   guarantees local). The remaining permissions are *declarative* for MVP —
+   first-party skills are trusted, reviewed code and simply don't import
+   what they didn't declare. Full capability injection (handles passed in,
+   no ambient imports) is part of the third-party-skill phase, which is why
+   manifests exist now: the declarations become the contract to enforce.
 4. Cloud consent propagates — `ctx.allow_cloud` flows from the meeting/
    workspace flag through the loop into every LLM call a skill makes.
 5. Everything is audited — every invocation is appended to audit_log
@@ -147,6 +153,13 @@ class SkillRuntime:
         if err:
             self._audit(ctx, name, params, "", False, f"invalid params: {err}")
             return {"error": f"invalid parameters: {err}"}
+
+        # Rule 3 (enforced part): no llm:cloud in the manifest → the skill
+        # runs with consent stripped; the harness gate then guarantees local.
+        if ctx.allow_cloud and "llm:cloud" not in reg.manifest.permissions:
+            import dataclasses
+
+            ctx = dataclasses.replace(ctx, allow_cloud=False)
 
         # Rule 2: side effects require a human click, every time.
         if reg.manifest.side_effect and not ctx.confirmed:

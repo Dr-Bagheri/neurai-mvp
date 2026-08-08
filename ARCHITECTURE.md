@@ -2,11 +2,13 @@
 
 **A Persian-first, offline-capable, multi-task AI assistant platform.**
 
-> Status: **v0.2 — all decisions locked.** Changes from v0.1 are marked **[REVISED]**.
+> Status: **v0.2 — all decisions locked (D1–D11), server engine + webui built against
+> them.** Changes from v0.1 are marked **[REVISED]**.
 >
 > Locked decisions: **16 GB / no-GPU baseline · shared office server from day one ·
 > live transcription from day one (1 meeting at a time) · both mic capture modes ·
-> Windows-only MVP · Apache-2.0.**
+> Windows-first full installer + Linux via Docker (D10) · sealed encrypted audio (D11) ·
+> Apache-2.0.**
 
 ---
 

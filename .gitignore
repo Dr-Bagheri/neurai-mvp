@@ -1,5 +1,6 @@
 # Local-only documents (kept out of the repo by choice)
 docs/*.docx
+docs/*.pdf
 
 # Local-only Windows install pack (D10 packaging layer; never published)
 installer/

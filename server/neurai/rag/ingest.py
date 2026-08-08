@@ -70,7 +70,11 @@ async def index_document_job(payload: dict[str, Any]) -> None:
     if doc is None:
         return
     try:
-        text = extract_document_text(Path(doc["path"]), doc["mime"])
+        from neurai.fa import fa_normalize
+
+        # D5: documents go through fa_normalize like everything else, so an
+        # Arabic-typed ي/ك query and a normalized chunk can't diverge.
+        text = fa_normalize(extract_document_text(Path(doc["path"]), doc["mime"]))
         await index_text(doc["owner_id"], "document", doc_id, text)
         db.execute("UPDATE documents SET status='indexed' WHERE id=?", (doc_id,))
     except Exception:

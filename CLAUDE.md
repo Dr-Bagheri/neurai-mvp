@@ -1,8 +1,9 @@
 # NeurAI — session guide
 
 NeurAI is a Persian-first, offline-capable, on-premise AI meeting-assistant platform
-(FastAPI server on Windows + browser clients over LAN). Early build phase: the server
-engine (`server/`) and webui (`webui/`) skeletons exist; models are not wired yet.
+(FastAPI server on Windows + browser clients over LAN). Build phase: the server engine
+(`server/`, 41 tests, encryption default-on) and webui (`webui/`, mock-backed) are built;
+real ASR/LLM models are not wired yet (fake/pluggable engines only).
 
 ## Source of truth
 
@@ -85,3 +86,11 @@ is the only one with working GitHub access (github.com/Dr-Bagheri/neurai-mvp).
   `test_audio_nonce_uniqueness_per_file` — asserts distinct nonces + distinct
   ciphertexts for identical plaintext across 20 files, 16-byte length, CSPRNG source,
   and disjoint keystream on append-resume. 41 tests green.
+- 2026-08-08 (review): full D1–D11 audit vs code passed (D2/D3/D9/D11 fully hold; rest
+  correct for phase). Docs re-synced (README D1–D11/status/CI claim, webui/server READMEs).
+  Wheel packaging fixed: migration SQL now ships as package-data (fresh installs had no
+  tables). **Local-only Windows install pack** (D10) built at `installer/` — offline
+  wheels + webui + install/uninstall scripts, verified end-to-end (health OK, DB
+  encrypted); `installer/`, `docs/*.pdf`, `docs/*.docx` are gitignored by user request.
+  Open fix-list handed to sessions: D7 rule-3 manifest enforcement, fa_normalize on RAG
+  ingest/query, webui types generated from openapi.json, client.ts still 100% mock.

@@ -11,7 +11,7 @@ neurai/
 ├── main.py        # FastAPI app factory, lifespan (job worker), webui serving
 ├── config.py      # env-driven boot config (NEURAI_*); runtime settings live in DB
 ├── db/            # SQLite (WAL) schema + access layer — per-user scoping everywhere
-├── auth/          # local accounts, scrypt hashes, session cookies
+├── auth/          # local accounts, argon2id hashes, session cookies
 ├── api/           # REST + WebSocket routers (meetings, chat, documents, admin, …)
 ├── audio/         # live sessions, two-pass ASR (pluggable engines), VAD, diarization
 ├── harness/       # complete(): local/cloud routing, consent gate, fallback, map-reduce

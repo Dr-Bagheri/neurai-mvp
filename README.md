@@ -46,7 +46,7 @@ The web UI (RTL-first, Vazirmatn, Jalali dates), running against the demo data s
 ## Architecture at a glance
 
 One on-premise server, browser clients on the LAN, local models by default, cloud as a
-consent-gated upgrade. Full detail with all locked decisions (D1–D10):
+consent-gated upgrade. Full detail with all locked decisions (D1–D11):
 **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ```mermaid
@@ -58,7 +58,7 @@ flowchart TB
         SK["Skill Runtime<br/>ACLs · confirmation gate · audit log"]
         H["Model Harness<br/>routing · fallback · chunking · tool loop"]
         AP["Audio Pipeline<br/>VAD → live ASR → quality ASR → diarization → fa post-processing"]
-        DL["SQLite + sqlite-vec<br/>encrypted at rest, per-user scoping"]
+        DL["SQLite (SQLCipher)<br/>encrypted at rest, per-user scoping"]
         LM["Local models<br/>faster-whisper · Ollama ~8B · BGE-M3"]
     end
 
@@ -75,12 +75,12 @@ flowchart TB
 
 | Path | Contents |
 |---|---|
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Single source of truth — all decisions (D1–D10), threat model, roadmap |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Single source of truth — all decisions (D1–D11), threat model, roadmap |
 | [`server/`](server/) | Python FastAPI engine: audio pipeline, model harness, skills runtime, RAG, auth, SQLite layer, tests |
 | [`webui/`](webui/) | React + TypeScript client (Vite) — served by the engine in production |
 | [`docs/`](docs/) | Screenshots, benchmark results (Phase 0), ADRs |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreement for the parallel AI sessions building this project |
-| [`.github/workflows/`](.github/workflows/) | CI — lint, tests, Persian eval set with network blocked (offline profile is first-class) |
+| [`.github/workflows/`](.github/workflows/) | CI — offline test suite (encryption active, fake ASR engine); lint + Persian eval set with network blocked planned |
 
 ## Try the UI demo
 
@@ -102,7 +102,14 @@ two-pass live transcription, 16 GB no-GPU baseline, Windows-first.
 The **web UI is built** ([`webui/`](webui/)): React + TypeScript, RTL-first, Vazirmatn,
 Jalali dates — all MVP screens (live meeting, transcript + playback, chat with skills and
 the confirmation gate, action items, RAG, admin) running against a typed mock of the
-future FastAPI engine. See [webui/README.md](webui/README.md).
+FastAPI engine. See [webui/README.md](webui/README.md).
+
+The **server engine is built** ([`server/`](server/)): auth/sessions (argon2id + lockout),
+versioned SQL migrations, crash-safe two-pass audio pipeline (pluggable ASR), consent-gated
+model harness with cloud→local fallback, Skill Runtime (ACLs, confirmation gate, audit),
+owner-scoped RAG, صورتجلسه/SRT export, job queue, and admin API. Encryption at rest is
+default-on: SQLCipher database + sealed AES-256-CTR recordings (D11). 41 offline tests
+green; OpenAPI contract exported to `webui/openapi.json`. See [server/README.md](server/README.md).
 
 ## Stack
 
@@ -113,7 +120,7 @@ future FastAPI engine. See [webui/README.md](webui/README.md).
 | Speech | faster-whisper two-pass (live small model → quality Persian large-v3) + local diarization |
 | Local LLMs | Ollama (Qwen3 / Gemma / Aya, ~8B q4 on baseline) |
 | Cloud LLMs | OpenRouter (opt-in, consent-gated) |
-| Storage | SQLite + sqlite-vec on the server · optional encrypted Supabase backup |
+| Storage | SQLite (SQLCipher) + local vector search on the server · optional encrypted Supabase backup |
 
 ## License
 
