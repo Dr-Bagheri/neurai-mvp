@@ -505,6 +505,27 @@ One codebase, two delivery formats — decided so deployments can pick their ser
 - The engine stays OS-neutral: no Windows-only APIs in core code; the service wrapper and
   installer are the only Windows-specific layers.
 
+### D11 — **[NEW]** Sealed-audio format: AES-256-CTR `.neura` files
+
+Recordings are stored as sealed encrypted files (`meeting_N.neura`): magic bytes +
+per-file nonce + AES-256-CTR over the raw PCM, master key in the OS secret store
+(D8/D10 abstraction). Decided with the backend session when audio-at-rest encryption
+was pulled into Phase 1.
+
+- **Why CTR:** it preserves both prior invariants simultaneously — **crash-safety (D2)**:
+  chunks are encrypted and fsynced the instant they arrive, with no finalization step
+  whose loss could corrupt a recording (crash recovery is a status flip + requeued
+  quality pass); and **seekable playback**: CTR allows byte-offset random access, so the
+  server synthesizes the WAV container at serving time and honors HTTP Range requests.
+  An authenticated mode (GCM) would require chunk framing and a finalization step —
+  complexity against the D2 invariant for a property outside the threat model.
+- **Explicit non-goal:** tamper *detection* on audio. The D8 threat model is the stolen
+  disk (confidentiality); an attacker with write access to the data directory is out of
+  MVP scope. Revisit this trade-off if the threat model ever expands.
+- **Hard requirement:** per-file nonces MUST be unique for the lifetime of the master
+  key (random 128-bit per file, or per-file derived subkeys) — CTR nonce reuse destroys
+  confidentiality entirely. A test should assert nonce uniqueness across files.
+
 ---
 
 ## 4. Capacity planning (16 GB, no-GPU baseline)
@@ -569,6 +590,10 @@ a GPU or bigger box raises it later without code changes.
   Cloud components are strictly additive; three admin profiles (air-gapped / auto /
   per-workspace local-only); audio never leaves the server in any mode; CI tests the
   offline profile with network blocked.
+- **Sealed-audio format (D11):** AES-256-CTR `.neura` files — CTR chosen to preserve
+  crash-safety (encrypt+fsync per chunk, no finalization) and Range-seekable playback;
+  tamper detection on audio is an explicit non-goal (threat model = stolen disk);
+  per-file nonce uniqueness is a hard requirement.
 - **Hardening & operations (D8, D9):** crash-safe recording; encryption at rest (SQLCipher
   + DPAPI-held keys); data lifecycle (retention, true deletion, «محرمانه» sensitivity
   levels); numbered-SQL migrations from 001 (not Alembic — no ORM in the stack);

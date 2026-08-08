@@ -1,4 +1,4 @@
-"""Audio at-rest encryption (D4 — Phase 1 exit criterion, steward ruling).
+"""Audio at-rest encryption (D11; D4 Phase 1 exit criterion).
 
 Recordings are stored as a single sealed file per meeting:
 
@@ -19,6 +19,14 @@ Design constraints and why CTR:
 
 The 32-byte master key lives in the DPAPI-backed secret store (D8); each file
 gets a random 16-byte CTR nonce in its header.
+
+D11 hard requirement — nonce uniqueness for the lifetime of the master key:
+CTR nonce reuse across two files under one key is a two-time pad. The nonce
+is 128 bits from the stdlib CSPRNG (`secrets.token_bytes`), generated fresh
+per file, never counter-based or derived from meeting ids; the resume path
+keeps the existing nonce but continues the keystream at the ciphertext-length
+offset, so no keystream position is ever used twice. Covered by
+tests/test_hardening.py::test_audio_nonce_uniqueness_per_file.
 """
 from __future__ import annotations
 

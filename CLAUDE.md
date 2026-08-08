@@ -12,7 +12,7 @@ summary and must be kept in sync with it.
 
 ## Rules for every session
 
-1. **Do not contradict locked decisions** (D1–D10 and the §6 decision log) in code or docs.
+1. **Do not contradict locked decisions** (D1–D11 and the §6 decision log) in code or docs.
    If a decision seems wrong while implementing, do not silently deviate — surface it to
    the user and, if they agree, amend ARCHITECTURE.md first (mark the change `[REVISED]`,
    update the §6 decision log), then implement.

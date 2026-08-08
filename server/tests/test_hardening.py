@@ -75,6 +75,49 @@ def test_audio_encryption_roundtrip_and_resume(app_env):
     assert plain[:64] not in on_disk
 
 
+def test_audio_nonce_uniqueness_per_file(app_env, monkeypatch):
+    """D11 hard requirement: CTR nonce reuse across files under one master
+    key is a two-time pad. Every file must get its own 16-byte CSPRNG nonce."""
+    from neurai.config import get_config
+    from neurai.security import audiocrypt
+    from neurai.security.audiocrypt import HEADER_LEN, MAGIC, EncryptedAudioWriter
+
+    get_config().ensure_dirs()
+    rec_dir = get_config().recordings_dir
+    plain = bytes(range(256)) * 64  # identical plaintext in every file
+
+    nonces, ciphertexts = set(), set()
+    for i in range(20):
+        path = rec_dir / f"nonce_test_{i}.neura"
+        w = EncryptedAudioWriter(path)
+        w.write(plain)
+        w.close()
+        data = path.read_bytes()
+        assert data[:len(MAGIC)] == MAGIC
+        nonce = data[len(MAGIC):HEADER_LEN]
+        assert len(nonce) == 16                    # 128-bit, as D11 specifies
+        nonces.add(nonce)
+        ciphertexts.add(data[HEADER_LEN:])
+    assert len(nonces) == 20                       # unique per file
+    assert len(ciphertexts) == 20                  # same plaintext+key ≠ same ciphertext
+
+    # nonce source is the stdlib CSPRNG (secrets.token_bytes), not derived/counter
+    sentinel = bytes(range(16))
+    monkeypatch.setattr(audiocrypt.secrets, "token_bytes", lambda n: sentinel[:n])
+    path = rec_dir / "nonce_source_probe.neura"
+    EncryptedAudioWriter(path).close()
+    assert path.read_bytes()[len(MAGIC):HEADER_LEN] == sentinel
+
+    # resume never restarts the keystream: appending to an existing file keeps
+    # its nonce and continues at the ciphertext-length offset
+    w = EncryptedAudioWriter(rec_dir / "nonce_test_0.neura")
+    w.write(plain)
+    w.close()
+    data = (rec_dir / "nonce_test_0.neura").read_bytes()
+    first, second = data[HEADER_LEN:HEADER_LEN + len(plain)], data[HEADER_LEN + len(plain):]
+    assert first != second                         # same plaintext, disjoint keystream
+
+
 def test_crash_recovery_resumes_live_meeting(client):
     """A meeting still 'live' at startup (crash) is flipped to processing and
     its quality pass queued — the sealed recording needs no finalization."""
