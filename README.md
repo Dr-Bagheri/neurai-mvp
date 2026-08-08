@@ -32,4 +32,4 @@ two-pass live transcription, 16 GB no-GPU baseline, Windows-first.
 
 ## License
 
-TBD (Apache-2.0 proposed).
+[Apache-2.0](LICENSE).
