@@ -26,12 +26,26 @@ English is secondary.
 | **Chat assistant** | General Persian chat, Q&A, writing help | ✅ / ☁️ |
 | **Document Q&A (RAG)** | Ask questions over your own PDFs/docs, in Persian | ✅ Yes |
 | **Translation** | fa ↔ en | ✅ / ☁️ |
+| **Minutes & export** | Meeting templates (standup, decision meeting, …) and the official Iranian **صورتجلسه** format — attendees/absentees, agenda, مصوبات with assignees, signature lines — exported to Word/PDF (Jalali dates) + SRT subtitles | ✅ Yes |
+| **Action-item tracker** | Extracted action items become live objects (assignee, due date, status) in a dashboard; open items resurface when a recurring meeting starts | ✅ Yes |
+| **Cross-meeting intelligence** | Search across all meetings, recurring-topic threads, "what happened since last time" recaps for meeting series | ✅ Yes |
+| **Meeting notepad** | Take rough notes during the meeting; afterwards the LLM merges them with the transcript into structured minutes you co-wrote | ✅ / ☁️ |
 | *(later)* Voice commands, OCR, email drafting… | Plugin system makes these addable | — |
 
 Each module is a **plugin over one shared core** (audio engine, model harness, storage). New
 tasks = new plugins, not new apps. Modules also expose their capabilities as **skills** —
 tools the chat assistant can invoke on the user's behalf («جلسه دیروز رو خلاصه کن»,
 "what did we decide about the budget?") — see D7.
+
+### 1.1 Positioning
+
+The Persian competitors ([راوی](https://raavi.team/), [ویرا](https://ivira.ai/)) and the
+global ones (Otter, Fireflies, Fathom) are **cloud services**. NeurAI's wedge is what they
+structurally cannot offer: **on-premise / air-gapped**, meeting data that never leaves the
+building — the requirement of exactly the organizations (government, banking,
+security-conscious enterprise) most likely to pay for Persian meeting intelligence. The
+Persian-specific features (صورتجلسه, register conversion, Jalali) are the second moat: the
+global tools won't build them.
 
 ---
 
@@ -238,6 +252,23 @@ QUALITY PASS (starts when the meeting ends, queued):
    - **Manual relabel (always available):** in the transcript view, click any segment →
      assign a name → it propagates to that speaker's segments. This is the safety net when
      identification is wrong or a guest never enrolled.
+3. ***(later)* System-audio capture (online meetings):** capture the laptop's speaker
+   output while the user is in a Skyroom / BigBlueButton / Google Meet / Zoom call —
+   bot-free, works with *any* meeting app (the Meetily approach). Meeting *bots* that join
+   calls are explicitly out of scope; system-audio capture covers the need at a fraction
+   of the complexity.
+
+**Live meeting UX (part of the transcription module, not extras):**
+
+- **Audio-linked playback:** the recording is kept alongside the transcript; clicking any
+  sentence plays that exact moment. This is what makes users trust an imperfect transcript
+  — and it directly serves "play me the part where…". Timestamps make it nearly free.
+- **In-meeting bookmarks:** a «علامت بزن» button/hotkey pins the current moment during the
+  live meeting; the quality pass expands each pin with surrounding context, and bookmarks
+  become jump targets in the final transcript.
+- **Meeting notepad:** free-form notes typed during the meeting are stored with timestamps
+  and merged with the transcript by the LLM afterwards ("merge my notes" skill) — minutes
+  the user co-wrote, not just AI output.
 
 - Persian model bake-off in week 0: [vhdm/whisper-large-fa-v1](https://huggingface.co/vhdm/whisper-large-fa-v1),
   `whisper-large-v3-turbo`, Qwen3-ASR — **benchmarked on real meeting recordings**
@@ -294,6 +325,13 @@ Request → Policy check:
   Arabic→Persian char mapping) applied to *both* ASR output and LLM output. Hazm/Parsivar
   are aging projects — **pin versions and wrap them behind our own `fa_normalize()`
   interface** so they can be swapped without touching modules.
+- **Register conversion (گفتاری → نوشتاری):** ASR outputs spoken Persian («می‌خوایم»,
+  «بریم»); official documents need the written register. A dedicated post-processing skill
+  rewrites colloquial transcript text into formal Persian for minutes/صورتجلسه — a
+  Persian-specific capability no global competitor ships, evaluated in the CI eval set.
+- **صورتجلسه as a first-class output:** the formal Iranian minutes format (attendees,
+  agenda, مصوبات, signature lines) is a built-in template with Word/PDF export and Jalali
+  dates — the document many target organizations were going to write by hand anyway.
 - **Prompting:** system prompts engineered and evaluated in Persian; a small Persian eval
   set (transcription WER + summary quality) runs in CI so regressions get caught.
 - **Mixed-language reality:** meetings mix Persian + English tech terms — code-switching is
@@ -329,7 +367,10 @@ and executed by a central **Skill Runtime**.
 
 - Each task module registers skills as typed tools (name, description, JSON-schema
   parameters): `list_meetings`, `get_transcript`, `search_transcripts`,
-  `summarize_meeting`, `extract_action_items`, `search_documents`, `translate`, …
+  `summarize_meeting`, `extract_action_items`, `list_open_action_items`,
+  `search_documents`, `translate`, `formalize_text` (گفتاری→نوشتاری),
+  `export_minutes` (templates incl. صورتجلسه), `merge_notes`,
+  `recap_meeting_series`, …
 - The Model Harness runs a standard **tool-use loop**: model proposes a tool call → Skill
   Runtime validates and executes it → result goes back to the model → repeat until answer.
 - **Two-tier invocation**, because 8B local models are unreliable agentic drivers: common
@@ -393,11 +434,23 @@ a GPU or bigger box raises it later without code changes.
 | Phase | Deliverable | Definition of done |
 |---|---|---|
 | **0. Benchmarks** (~week 1) | Persian ASR + local-LLM bake-off on *real meeting audio*; diarization + speaker-embedding license check; live-meeting load test on the 16 GB baseline | Chosen default models with measured WER/quality; capacity table validated |
-| **1. Live transcriber on the server** | Server install + browser client, **room-mic mode**: live captions, quality pass with diarized speakers + manual relabel; auth + per-user meetings | Two users, WiFi router with no internet, full meeting transcribed and speakers named by hand |
-| **2. Harness + intelligence** | Ollama routing + map-reduce summaries, action items; OpenRouter behind consent gate; **speaker ID** (enrollment round + voice profiles) and **per-participant capture mode** | Fallback proven by pulling the network cable mid-task; a recurring participant auto-named in room mode |
-| **3. Chat + RAG + skills** | Persian chat; Q&A over transcripts & PDFs; Skill Runtime with first-party skills (summarize, search, extract) + intent router + audit log | Answers cite sources; "summarize yesterday's meeting" works end-to-end; a user provably cannot query another user's meeting via chat |
-| **4. Backup + polish** | Encrypted snapshot backup (optional), model manager, admin dashboard, Windows service installer | One-command install on a clean Windows machine |
+| **1. Live transcriber on the server** | Server install + browser client, **room-mic mode**: live captions, quality pass with diarized speakers + manual relabel; **audio-linked playback**; **in-meeting bookmarks**; auth + per-user meetings | Two users, WiFi router with no internet, full meeting transcribed, speakers named by hand, any sentence plays its audio |
+| **2. Harness + intelligence** | Ollama routing + map-reduce summaries, action items; OpenRouter behind consent gate; **speaker ID** (enrollment round + voice profiles) and **per-participant capture mode**; **register conversion (گفتاری→نوشتاری)** + **minutes templates & صورتجلسه export** (Word/PDF/SRT) | Fallback proven by pulling the network cable mid-task; a recurring participant auto-named in room mode; a formal صورتجلسه exported from a real meeting |
+| **3. Chat + RAG + skills** | Persian chat; Q&A over transcripts & PDFs; Skill Runtime with first-party skills + intent router + audit log; **action-item tracker** (live objects, dashboard, resurfacing in recurring meetings); **cross-meeting search & series recaps**; **meeting notepad + notes merge** | Answers cite sources; "summarize yesterday's meeting" works end-to-end; a user provably cannot query another user's meeting via chat; an open action item from last week resurfaces in this week's meeting |
+| **4. Backup + polish** | Encrypted snapshot backup (optional), model manager, admin dashboard, Windows service installer; **system-audio capture** for online meetings (Skyroom/BBB/Meet/Zoom, bot-free) | One-command install on a clean Windows machine; an online meeting captured without a bot |
 | **5. Thin clients** | Tauri desktop wrapper (hotkeys, tray recording); single-user laptop preset | Same server codebase, no forks |
+
+### 5.1 Backlog (agreed direction, not scheduled)
+
+- **Team workspaces + RBAC:** shared meeting archives per team/department with roles, on
+  top of the existing per-user ACLs (the AnythingLLM enterprise pattern). The data-layer
+  scoping is designed so this is additive.
+- **Meeting analytics:** talk-time per speaker, meeting length/cost trends — diarization
+  gives it nearly free, but it's workplace-sensitive: **admin-optional, off by default**.
+- **Public API + webhooks:** "meeting ended → POST summary to internal system"; cheap
+  later because the platform is OpenAPI-first.
+- **Calendar integration:** auto-create meeting entries from the office calendar — decide
+  when real deployments reveal what they run (often Exchange/local, not Google).
 
 ---
 
@@ -419,3 +472,9 @@ a GPU or bigger box raises it later without code changes.
   Cloud components are strictly additive; three admin profiles (air-gapped / auto /
   per-workspace local-only); audio never leaves the server in any mode; CI tests the
   offline profile with network blocked.
+- **Competitive feature set (from market research):** adopted into phases 1–4 — audio-linked
+  playback, in-meeting bookmarks, صورتجلسه/templates export, register conversion,
+  action-item tracker, cross-meeting intelligence, meeting notepad + notes merge,
+  system-audio capture; backlogged (§5.1) — team workspaces/RBAC, meeting analytics
+  (admin-optional), public API/webhooks, calendar integration. Meeting bots: explicitly
+  out of scope.
