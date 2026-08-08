@@ -7,10 +7,16 @@ multi-task AI assistant platform for teams, deployed on-premise.
   full-quality transcript with speaker labels minutes after it ends. Fully offline.
 - 🧠 **Meeting intelligence** — summaries, action items, decisions
 - 💬 **Persian chat assistant** and 📄 **document Q&A (RAG)** over your own files
+- 🛠️ **Skills (AI-native):** ask in plain Persian — «جلسه دیروز رو خلاصه کن» — and the
+  assistant calls the right tools itself; every call runs with *your* permissions, on an
+  audited, locked-down skill runtime
 - 🏠 **Local-first:** one server on your office network, used from any browser on the LAN;
   runs air-gapped with local models (faster-whisper, Ollama)
 - ☁️ **Cloud-enhanced (opt-in):** frontier models via OpenRouter when online and explicitly
   enabled, with automatic fallback to local
+- 🔌 **True dual-mode:** one architecture, two runtime profiles — every feature works
+  offline; cloud only upgrades text tasks under consent, and audio never leaves the server
+  in any mode (admin can lock the server to a fully air-gapped profile)
 - 🔄 Optional encrypted snapshot backup — off by default, never required
 
 ## Status
