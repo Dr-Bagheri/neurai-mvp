@@ -524,7 +524,13 @@ was pulled into Phase 1.
   MVP scope. Revisit this trade-off if the threat model ever expands.
 - **Hard requirement:** per-file nonces MUST be unique for the lifetime of the master
   key (random 128-bit per file, or per-file derived subkeys) — CTR nonce reuse destroys
-  confidentiality entirely. A test should assert nonce uniqueness across files.
+  confidentiality entirely. Equally: **append-resume MUST continue the keystream at the
+  ciphertext-length offset** (never restart or re-derive a used position) — reusing a
+  keystream position within a file is the same two-time-pad failure. Both properties are
+  implemented (128-bit `secrets.token_bytes` nonce per file; offset-continuation on
+  resume) and locked by `test_audio_nonce_uniqueness_per_file`, which asserts distinct
+  nonces and ciphertexts across files, CSPRNG sourcing, and disjoint keystream on
+  append-resume. Any change to the audio path must keep this test green and unweakened.
 
 ---
 

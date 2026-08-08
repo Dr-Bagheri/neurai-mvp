@@ -78,3 +78,10 @@ is the only one with working GitHub access (github.com/Dr-Bagheri/neurai-mvp).
   step) and Range-seekable playback (WAV synthesized at serving time). Crash recovery
   is now a status flip + requeued quality pass. 40 tests green, whole suite runs with
   encryption active. Approach documented in server/README.md.
+- 2026-08-08 (later): sealed-audio format promoted to **D11** by steward. Its hard
+  requirement (per-file CTR nonce uniqueness under one master key) verified: nonce is
+  128-bit per-file from `secrets.token_bytes` (CSPRNG), resume continues the keystream
+  at the ciphertext-length offset (no position reuse). Covered by
+  `test_audio_nonce_uniqueness_per_file` — asserts distinct nonces + distinct
+  ciphertexts for identical plaintext across 20 files, 16-byte length, CSPRNG source,
+  and disjoint keystream on append-resume. 41 tests green.
