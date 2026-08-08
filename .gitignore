@@ -13,3 +13,8 @@ dist/
 # OS / editor noise
 Thumbs.db
 .DS_Store
+
+# Session/tooling artifacts
+.playwright-mcp/
+*.egg-info/
+*.tsbuildinfo
