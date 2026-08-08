@@ -1,0 +1,26 @@
+# Server CI (D6/§2.1): tests run the offline profile as first-class — the
+# fake-engine suite needs no network, no models, no GPU.
+name: server-ci
+
+on:
+  push:
+    paths: ["server/**", ".github/workflows/server-ci.yml"]
+  pull_request:
+    paths: ["server/**", ".github/workflows/server-ci.yml"]
+
+jobs:
+  test:
+    runs-on: windows-latest   # Windows-only MVP (D1)
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -e .[dev]
+      - run: python -m pytest -q
+        env:
+          NEURAI_ASR: fake
+          NEURAI_PROFILE: air_gapped

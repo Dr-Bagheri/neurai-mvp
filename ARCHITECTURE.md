@@ -275,6 +275,11 @@ QUALITY PASS (starts when the meeting ends, queued):
   (far-field mics, overlapping speech, fa/en code-switching), not clean benchmark audio.
   Published WER (~14%) will not survive contact with a conference room; measure honestly.
 - Model files download **once** through the Model Manager, then everything runs air-gapped.
+- **Crash-safe recording (hard requirement):** losing a meeting once loses the customer.
+  Audio chunks are flushed to disk as they arrive (append-only segment files), job state is
+  journaled, and on restart the server auto-recovers: an interrupted live meeting's audio
+  survives intact and the quality pass resumes from the recording. Phase 1's definition of
+  done includes killing the server process mid-meeting and losing nothing.
 
 ### D3 — Model Harness (router + fallback + **[REVISED]** chunking, consent-gated cloud)
 
@@ -311,6 +316,19 @@ Request → Policy check:
   small team's write load fine; Postgres is a later option if a deployment outgrows it.)
 - **Vector search = sqlite-vec** + **BGE-M3 embeddings** (strong multilingual incl.
   Persian, runs locally). Brute-force search — completely fine at team-corpus scale.
+- **Encryption at rest:** the server concentrates an organization's entire meeting history
+  in one place — an attractive theft target. The SQLite database is encrypted (SQLCipher or
+  equivalent) and audio files are encrypted on disk, with the key held by the service
+  account (Windows DPAPI). Done from day one; retrofitting encryption after real data
+  exists is near-impossible.
+- **Data lifecycle:** per-deployment **retention policy** (default: audio kept 90 days,
+  transcripts kept until deleted — both admin-configurable); **true deletion** removes the
+  transcript, audio, embeddings, and search index entries together, not just the DB row;
+  per-meeting **sensitivity levels** — a meeting marked «محرمانه» is local-only forever,
+  excluded from cross-meeting search and from backups, visible only to explicitly named
+  users.
+- **Schema migrations from migration 001:** versioned migrations (Alembic) from the first
+  table — on-premise means we can never fix a customer's database by hand.
 - **[REVISED] Supabase scope cut from "sync" to "backup":** a bidirectional sync engine
   with offline replay is a project in itself (conflicts, migrations, partial failures).
   MVP+1 ships **client-side-encrypted snapshot backup/restore** instead — 90% of the value,
@@ -409,6 +427,77 @@ persuasive text, and meeting audio is persuasive text that attackers can inject 
 being in (or calling into) a meeting. So the trust boundary sits in the Skill Runtime:
 deterministic code, running with the user's permissions, gating every effect.
 
+### D8 — **[NEW]** Threat model & server hardening
+
+The D7 rules secure the AI layer; this secures the server itself. Threats in scope: a
+malicious or curious LAN user, a stolen server disk, a compromised client browser, and
+adversarial content in meetings/documents (covered by D7). Out of scope for MVP: a fully
+compromised server OS, and nation-state attackers.
+
+- **Transport:** TLS on the LAN (the installer's self-signed cert from D1); WebSocket and
+  REST both encrypted; HSTS on the served UI.
+- **Secrets:** the OpenRouter API key and the at-rest encryption key live in **Windows
+  DPAPI** under the service account — never in config files, never in the repo, never
+  readable by regular users on the server.
+- **Auth hygiene:** salted+hashed passwords (argon2), login rate limiting with lockout
+  backoff, session expiry + revocation on password change, admin actions re-prompt for
+  password.
+- **Release integrity:** installers and update bundles are **signed**; the updater and
+  Model Manager verify signatures before applying anything (see D9 — this is what makes
+  USB-carried updates safe for air-gapped sites).
+- **Isolation:** the engine runs as a low-privilege Windows service account with access
+  only to its own data directory; no shell-out from any request path.
+
+### D9 — **[NEW]** Operations: air-gapped updates, observability, no telemetry
+
+- **Air-gapped update & model distribution:** without this, "air-gapped" quietly becomes
+  "frozen forever." Releases ship as **signed offline bundles** — app update packs and
+  model packs — that an admin downloads on any internet-connected machine and carries in
+  (USB). The Model Manager and updater verify the signature (D8), then apply offline.
+  Online servers get the same bundles over the network; one mechanism, two transports.
+- **Admin health page:** disk usage and projection (audio grows fast), job queue state,
+  model status (loaded/version), last-error log, license/retention settings — served from
+  the same web UI, admin-only.
+- **Structured local logs:** JSON logs with rotation, correlation IDs per request/job;
+  the audit log (D7) is separate and append-only.
+- **No telemetry, ever — as a product guarantee:** the platform sends nothing home; no
+  usage pings, no error reporting to us, nothing. For our market this is a selling point;
+  it's written here so it never gets "helpfully" added. Diagnostics leave the building
+  only as an admin-exported support bundle, by hand.
+
+### D10 — **[NEW]** Packaging: full Windows installer + Linux via Docker
+
+One codebase, two delivery formats — decided so deployments can pick their server OS.
+
+**Windows (primary — "next, next, finish"):**
+
+- A single **full installer** (MSI/WiX): embedded Python runtime, the engine, web UI
+  assets, bundled Ollama runtime, cert generation, Windows service registration, firewall
+  rule, data directory setup. **Zero prerequisites** — installs on a clean machine with no
+  Python, no admin knowledge, no internet.
+- Models are *not* inside the base installer (they're multi-GB): the Model Manager
+  downloads them on first run, **or** imports a signed offline model pack (D9). For fully
+  air-gapped sites we publish a **complete offline bundle** — installer + default model
+  pack in one archive — downloadable on any machine and carried in.
+
+**Linux (secondary — for "a different server"):**
+
+- **Docker Compose** as the supported path: engine container + Ollama container + named
+  volumes, one `docker compose up -d` (or a one-line install script). Naturally fits
+  Python/ML dependencies; GPU passthrough comes free via the NVIDIA container toolkit.
+- Air-gapped Linux: the same signed bundles delivered as `docker load` image tarballs.
+- Native packages (`.deb`/systemd) only if a real deployment can't run Docker.
+
+**Cross-platform notes:**
+
+- CI builds and **signs both artifacts** (D8) on every release: the Windows installer and
+  the Docker images.
+- Secrets storage is behind an abstraction: **Windows DPAPI** on Windows, root-owned
+  `0600` key file (or kernel keyring) on Linux — same interface, per-OS backend (amends
+  D8, which assumed DPAPI only).
+- The engine stays OS-neutral: no Windows-only APIs in core code; the service wrapper and
+  installer are the only Windows-specific layers.
+
 ---
 
 ## 4. Capacity planning (16 GB, no-GPU baseline)
@@ -434,11 +523,11 @@ a GPU or bigger box raises it later without code changes.
 | Phase | Deliverable | Definition of done |
 |---|---|---|
 | **0. Benchmarks** (~week 1) | Persian ASR + local-LLM bake-off on *real meeting audio*; diarization + speaker-embedding license check; live-meeting load test on the 16 GB baseline | Chosen default models with measured WER/quality; capacity table validated |
-| **1. Live transcriber on the server** | Server install + browser client, **room-mic mode**: live captions, quality pass with diarized speakers + manual relabel; **audio-linked playback**; **in-meeting bookmarks**; auth + per-user meetings | Two users, WiFi router with no internet, full meeting transcribed, speakers named by hand, any sentence plays its audio |
+| **1. Live transcriber on the server** | Server install + browser client, **room-mic mode**: live captions, quality pass with diarized speakers + manual relabel; **audio-linked playback**; **in-meeting bookmarks**; auth + per-user meetings; crash-safe recording; encrypted DB from migration 001 | Two users, WiFi router with no internet, full meeting transcribed, speakers named by hand, any sentence plays its audio; **server killed mid-meeting → nothing lost, quality pass resumes** |
 | **2. Harness + intelligence** | Ollama routing + map-reduce summaries, action items; OpenRouter behind consent gate; **speaker ID** (enrollment round + voice profiles) and **per-participant capture mode**; **register conversion (گفتاری→نوشتاری)** + **minutes templates & صورتجلسه export** (Word/PDF/SRT) | Fallback proven by pulling the network cable mid-task; a recurring participant auto-named in room mode; a formal صورتجلسه exported from a real meeting |
 | **3. Chat + RAG + skills** | Persian chat; Q&A over transcripts & PDFs; Skill Runtime with first-party skills + intent router + audit log; **action-item tracker** (live objects, dashboard, resurfacing in recurring meetings); **cross-meeting search & series recaps**; **meeting notepad + notes merge** | Answers cite sources; "summarize yesterday's meeting" works end-to-end; a user provably cannot query another user's meeting via chat; an open action item from last week resurfaces in this week's meeting |
-| **4. Backup + polish** | Encrypted snapshot backup (optional), model manager, admin dashboard, Windows service installer; **system-audio capture** for online meetings (Skyroom/BBB/Meet/Zoom, bot-free) | One-command install on a clean Windows machine; an online meeting captured without a bot |
-| **5. Thin clients** | Tauri desktop wrapper (hotkeys, tray recording); single-user laptop preset | Same server codebase, no forks |
+| **4. Backup + polish** | Encrypted snapshot backup (optional), model manager, admin health page, **full Windows installer** (embedded runtime, zero prerequisites — D10), **signed offline update/model bundles**, retention + sensitivity levels; **system-audio capture** for online meetings (Skyroom/BBB/Meet/Zoom, bot-free) | "Next, next, finish" install on a clean Windows machine with no internet (using the offline bundle); an online meeting captured without a bot; **an air-gapped server updated from a USB bundle** |
+| **5. Thin clients + Linux** | Tauri desktop wrapper (hotkeys, tray recording); single-user laptop preset; **Linux Docker Compose deployment** (incl. air-gapped image tarballs) | Same server codebase, no forks; `docker compose up` on a clean Linux box serves the same app |
 
 ### 5.1 Backlog (agreed direction, not scheduled)
 
@@ -462,8 +551,9 @@ a GPU or bigger box raises it later without code changes.
 - **Concurrency:** 1 live meeting at a time; config cap, not an architectural limit (§4).
 - **Mic strategy:** both capture modes, selectable per meeting; room mode gets speaker ID
   via enrollment round / voice profiles / manual relabel (D2).
-- **Server OS:** Windows for now — ships as a Windows service. Docker/Linux is a natural
-  later addition, not MVP scope.
+- **Server OS [REVISED]:** Windows-first (full zero-prerequisite installer, Windows
+  service), **plus Linux via Docker Compose** for deployments on a different server (D10).
+  Both built and signed by CI on every release.
 - **License:** Apache-2.0.
 - **Skills:** AI-native tool layer (D7) — first-party skills only for MVP; security
   enforced in the Skill Runtime (user-scoped ACLs, untrusted-content rule, manifests,
@@ -472,6 +562,11 @@ a GPU or bigger box raises it later without code changes.
   Cloud components are strictly additive; three admin profiles (air-gapped / auto /
   per-workspace local-only); audio never leaves the server in any mode; CI tests the
   offline profile with network blocked.
+- **Hardening & operations (D8, D9):** crash-safe recording; encryption at rest (SQLCipher
+  + DPAPI-held keys); data lifecycle (retention, true deletion, «محرمانه» sensitivity
+  levels); Alembic migrations from 001; TLS + auth hygiene + signed releases; signed
+  offline update/model bundles for air-gapped sites; admin health page; structured local
+  logs; **no telemetry, ever**.
 - **Competitive feature set (from market research):** adopted into phases 1–4 — audio-linked
   playback, in-meeting bookmarks, صورتجلسه/templates export, register conversion,
   action-item tracker, cross-meeting intelligence, meeting notepad + notes merge,
