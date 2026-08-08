@@ -1,0 +1,15 @@
+# Local-only documents (kept out of the repo by choice)
+docs/*.docx
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Node
+node_modules/
+dist/
+
+# OS / editor noise
+Thumbs.db
+.DS_Store
